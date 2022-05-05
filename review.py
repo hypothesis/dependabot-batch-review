@@ -81,37 +81,37 @@ def parse_dependabot_pr_title(title: str) -> tuple[str, str, str]:
 def fetch_dependency_prs(
     gh: GitHubClient, organization: str, label="dependencies"
 ) -> list[DependencyUpdatePR]:
-    dependencies_query = f"""
-    query($query: String!) {{ 
-      search(type:ISSUE, query: $query, first:100) {{
+    dependencies_query = """
+    query($query: String!) {
+      search(type:ISSUE, query: $query, first:100) {
         issueCount
-        nodes {{
-          ... on PullRequest {{
-            repository {{
+        nodes {
+          ... on PullRequest {
+            repository {
               name
               viewerDefaultMergeMethod
-            }}
+            }
 
-            author {{ login }}
+            author { login }
             id
             title
             bodyText
             reviewDecision
             url
 
-            commits (last:1) {{
-              nodes {{
-                commit {{
-                  statusCheckRollup {{
+            commits (last:1) {
+              nodes {
+                commit {
+                  statusCheckRollup {
                     state
-                  }}
-                }}
-              }}
-            }}
-          }}
-        }}
-      }}
-    }}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
     """
     query = f"org:{organization} label:{label} is:pr is:open author:app/dependabot"
     result = gh.query(query=dependencies_query, variables={"query": query})
