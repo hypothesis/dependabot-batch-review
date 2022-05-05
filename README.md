@@ -54,3 +54,8 @@ Version ranges:
 Check status: 1 passed, 0 failed
 [m]erge all passing, [s]kip, [q]uit, [r]eview notes, [l]ist PR urls:
 ```
+
+## Limitations
+
+This tool currently only fetches up to 100 PRs per run. To continue reviewing
+after processing these, simply run the tool again.
