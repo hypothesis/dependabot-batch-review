@@ -101,10 +101,14 @@ def fetch_dependency_prs(
     updates: list[DependencyUpdatePR] = []
     for pr in pull_requests:
         dependency, from_version, to_version = parse_dependabot_pr_title(pr["title"])
-        checks_passed = (
-            pr["commits"]["nodes"][0]["commit"]["statusCheckRollup"]["state"]
-            == "SUCCESS"
+        status_check_rollup = pr["commits"]["nodes"][0]["commit"]["statusCheckRollup"]
+
+        # nb. If CI is not set up in a repository, `status_check_rollup` will
+        # be None, which we treat as checks failing.
+        checks_passed = status_check_rollup and (
+            status_check_rollup["state"] == "SUCCESS"
         )
+
         updates.append(
             DependencyUpdatePR(
                 id=pr["id"],
