@@ -30,11 +30,15 @@ class GitHubClient:
         )
         body = result.json()
         result.raise_for_status()
+        if "errors" in body:
+            errors = body["errors"]
+            raise Exception(f"Query failed: {json.dumps(errors)}")
         return body["data"]
 
 
 @dataclass
 class DependencyUpdatePR:
+    id: str
     dependency: str
     from_version: str
     to_version: str
@@ -67,6 +71,8 @@ def fetch_dependency_prs(
             repository {{
               name
             }}
+
+            id
             title
             bodyText
             reviewDecision
@@ -99,6 +105,7 @@ def fetch_dependency_prs(
         )
         updates.append(
             DependencyUpdatePR(
+                id=pr["id"],
                 approved=pr["reviewDecision"] == "APPROVED",
                 checks_passed=checks_passed,
                 dependency=dependency,
@@ -110,6 +117,20 @@ def fetch_dependency_prs(
         )
 
     return updates
+
+
+def merge_pr(gh: GitHubClient, pr_id: str):
+    merge_query = """
+    mutation mergePullRequest($input: MergePullRequestInput!) {
+      mergePullRequest(input: $input) {
+        pullRequest {
+          merged
+          url
+        }
+      }
+    }
+    """
+    gh.query(merge_query, {"input": {"pullRequestId": pr_id}})
 
 
 def read_action(prompt: str):
@@ -170,9 +191,12 @@ def main():
             if "quit".startswith(action):
                 return
             elif "merge".startswith(action):
-                for update in updates:
+                for update in checks_passed:
                     print(f"Merging {update.url}…")
-                    time.sleep(2)
+                    try:
+                        merge_pr(gh_client, update.id)
+                    except Exception as e:
+                        print("Merge failed: ", repr(e))
                 break
             elif "skip".startswith(action):
                 break
