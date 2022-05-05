@@ -147,15 +147,16 @@ def open_url(url: str):
 
 def main():
     parser = ArgumentParser()
+    parser.add_argument(
+        "organization", help="GitHub user or organization to search for Dependabot PRs"
+    )
     args = parser.parse_args()
 
     access_token = os.environ["GITHUB_TOKEN"]
     gh_client = GitHubClient(token=access_token)
 
-    org = "hypothesis"
-
-    print(f"Finding Dependabot PRs for organization {org}…")
-    updates = fetch_dependency_prs(gh_client, organization="hypothesis")
+    print(f"Finding open Dependabot PRs for user or organization {args.organization}…")
+    updates = fetch_dependency_prs(gh_client, organization=args.organization)
 
     updates_by_dependency = {}
     for update in updates:
