@@ -100,10 +100,6 @@ def read_action(prompt: str):
     return action
 
 
-def prefix_matches(value: str, prefix: str):
-    return prefix[0 : len(value)] == value
-
-
 def open_url(url: str):
     """Open a URL in the user's default browser."""
     subprocess.call(["open", url])
@@ -147,18 +143,18 @@ def main():
             action = read_action(
                 "[m]erge all, [s]kip, [q]uit, [r]eview notes, [l]ist urls"
             )
-            if prefix_matches(action, "quit"):
+            if "quit".startswith(action):
                 return
-            elif prefix_matches(action, "merge"):
+            elif "merge".startswith(action):
                 for update in updates:
                     print(f"Merging {update.url}…")
                     time.sleep(2)
                 break
-            elif prefix_matches(action, "skip"):
+            elif "skip".startswith(action):
                 break
-            elif prefix_matches(action, "review"):
+            elif "review".startswith(action):
                 open_url(updates[0].url)
-            elif prefix_matches(action, "list"):
+            elif "list".startswith(action):
                 urls = sorted(u.url for u in updates)
                 for url in urls:
                     print(f"  {url}")
