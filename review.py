@@ -6,6 +6,7 @@ import os
 import time
 from typing import Any
 import subprocess
+import sys
 
 import requests
 
@@ -166,7 +167,15 @@ def merge_pr(gh: GitHubClient, pr_id: str, merge_method="MERGE"):
     )
 
 
-def read_action(prompt: str):
+def read_action(prompt: str, default=None) -> str:
+    """
+    Read a command from the user.
+
+    :param default: Default response in non-interactive environments
+    """
+    if not os.isatty(sys.stdout.fileno()) and default:
+        return default
+
     action = ""
     while not action:
         action = input(f"{prompt}: ").strip()
@@ -220,7 +229,8 @@ def main():
 
         while True:
             action = read_action(
-                "[m]erge all passing, [s]kip, [q]uit, [r]eview notes, [l]ist PR urls"
+                "[m]erge all passing, [s]kip, [q]uit, [r]eview notes, [l]ist PR urls",
+                default="skip",
             )
             if "quit".startswith(action):
                 return
