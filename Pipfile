@@ -1,0 +1,19 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+requests = "*"
+
+[dev-packages]
+black = "*"
+
+[requires]
+python_version = "3.9"
+
+[scripts]
+qa = "sh -c 'pipenv run checkformat'"
+checkformat = "black --check ."
+format = "black ."
+review = "python review.py"
