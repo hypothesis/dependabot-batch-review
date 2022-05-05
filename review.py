@@ -91,6 +91,7 @@ def fetch_dependency_prs(
               viewerDefaultMergeMethod
             }}
 
+            author {{ login }}
             id
             title
             bodyText
@@ -111,7 +112,7 @@ def fetch_dependency_prs(
       }}
     }}
     """
-    query = f"org:{organization} label:{label} is:pr is:open"
+    query = f"org:{organization} label:{label} is:pr is:open author:app/dependabot"
     result = gh.query(query=dependencies_query, variables={"query": query})
     pull_requests = result["search"]["nodes"]
 
