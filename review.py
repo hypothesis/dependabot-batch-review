@@ -3,7 +3,9 @@ from dataclasses import dataclass
 import json
 import re
 import os
+import time
 from typing import Any
+import subprocess
 
 import requests
 
@@ -31,6 +33,7 @@ class DependencyUpdatePR:
     from_version: str
     to_version: str
     notes: str
+    url: str
 
 
 def parse_dependabot_pr_title(title: str) -> tuple[str, str, str]:
@@ -56,6 +59,7 @@ def fetch_dependency_prs(
             }}
             title
             bodyText
+            url
           }}
         }}
       }}
@@ -74,10 +78,26 @@ def fetch_dependency_prs(
                 from_version=from_version,
                 to_version=to_version,
                 notes=pr["bodyText"],
+                url=pr["url"],
             )
         )
 
     return updates
+
+
+def read_action(prompt: str):
+    action = ""
+    while not action:
+        action = input(f"{prompt}: ").strip()
+    return action
+
+
+def prefix_matches(value: str, prefix: str):
+    return prefix[0 : len(value)] == value
+
+
+def open_url(url: str):
+    subprocess.call(["open", url])
 
 
 def main():
@@ -87,7 +107,11 @@ def main():
     access_token = os.environ["GITHUB_TOKEN"]
     gh_client = GitHubClient(token=access_token)
 
-    updates = fetch_dependency_prs(gh_client, "hypothesis")
+    org = "hypothesis"
+
+    print(f"Finding Dependabot PRs for organization {org}…")
+    updates = fetch_dependency_prs(gh_client, organization="hypothesis")
+
     updates_by_dependency = {}
     for update in updates:
         if update.dependency not in updates_by_dependency:
@@ -95,14 +119,43 @@ def main():
         updates_by_dependency[update.dependency].append(update)
 
     deps = sorted(updates_by_dependency.keys())
+    print(f"Found {len(updates)} PRs for {len(deps)} dependencies\n")
 
+    to_review = len(updates)
     for dep in deps:
         updates = updates_by_dependency[dep]
         version_bumps = {(u.from_version, u.to_version) for u in updates}
 
-        print(f"{len(updates)} updates for {dep}")
+        print(
+            f"{to_review} updates to review. Reviewing {len(updates)} updates for {dep}:"
+        )
+        print("Version ranges:")
         for from_ver, to_ver in version_bumps:
             print(f"  {from_ver} -> {to_ver}")
+        print(f"Example URL: {updates[0].url}")
+
+        while True:
+            action = read_action(
+                "[m]erge all, [s]kip, [q]uit, [r]eview notes, [l]ist urls"
+            )
+            if prefix_matches(action, "quit"):
+                return
+            elif prefix_matches(action, "merge"):
+                for update in updates:
+                    print(f"Merging {update.url}…")
+                    time.sleep(2)
+                break
+            elif prefix_matches(action, "skip"):
+                break
+            elif prefix_matches(action, "review"):
+                open_url(updates[0].url)
+            elif prefix_matches(action, "list"):
+                urls = sorted(u.url for u in updates)
+                for url in urls:
+                    print(f"  {url}")
+
+        to_review -= len(updates)
+        print("")
 
 
 if __name__ == "__main__":
