@@ -70,7 +70,7 @@ def parse_dependabot_pr_title(title: str) -> tuple[str, str, str]:
     """Extract package and version info from a Dependabot PR."""
 
     title_re = "Bump (\S+) from (\S+) to (\S+)"
-    fields_match = re.match(title_re, title)
+    fields_match = re.search(title_re, title, re.IGNORECASE)
     if not fields_match:
         raise ValueError(f"Failed to parse tile '{title}'")
     dependency, from_version, to_version = fields_match.groups()
