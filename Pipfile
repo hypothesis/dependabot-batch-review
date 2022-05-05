@@ -8,12 +8,15 @@ requests = "*"
 
 [dev-packages]
 black = "*"
+mypy = "*"
+types-requests = "*"
 
 [requires]
 python_version = "3.9"
 
 [scripts]
-qa = "sh -c 'pipenv run checkformat'"
+qa = "sh -c 'pipenv run checkformat && pipenv run typecheck'"
 checkformat = "black --check ."
 format = "black ."
+typecheck = "mypy ."
 review = "python review.py"
