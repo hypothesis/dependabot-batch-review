@@ -11,6 +11,12 @@ import requests
 
 
 class GitHubClient:
+    """
+    Client for GitHub's GraphQL API.
+
+    See https://docs.github.com/en/graphql.
+    """
+
     def __init__(self, token: str):
         self.token = token
         self.endpoint = "https://api.github.com/graphql"
@@ -37,6 +43,8 @@ class DependencyUpdatePR:
 
 
 def parse_dependabot_pr_title(title: str) -> tuple[str, str, str]:
+    """Extract package and version info from a Dependabot PR."""
+
     title_re = "Bump (\S+) from (\S+) to (\S+)"
     fields_match = re.match(title_re, title)
     if not fields_match:
@@ -97,6 +105,7 @@ def prefix_matches(value: str, prefix: str):
 
 
 def open_url(url: str):
+    """Open a URL in the user's default browser."""
     subprocess.call(["open", url])
 
 
