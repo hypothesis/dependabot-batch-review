@@ -40,6 +40,8 @@ class DependencyUpdatePR:
     to_version: str
     notes: str
     url: str
+    approved: bool
+    checks_passed: bool
 
 
 def parse_dependabot_pr_title(title: str) -> tuple[str, str, str]:
@@ -67,7 +69,18 @@ def fetch_dependency_prs(
             }}
             title
             bodyText
+            reviewDecision
             url
+
+            commits (last:1) {{
+              nodes {{
+                commit {{
+                  statusCheckRollup {{
+                    state
+                  }}
+                }}
+              }}
+            }}
           }}
         }}
       }}
@@ -80,12 +93,18 @@ def fetch_dependency_prs(
     updates: list[DependencyUpdatePR] = []
     for pr in pull_requests:
         dependency, from_version, to_version = parse_dependabot_pr_title(pr["title"])
+        checks_passed = (
+            pr["commits"]["nodes"][0]["commit"]["statusCheckRollup"]["state"]
+            == "SUCCESS"
+        )
         updates.append(
             DependencyUpdatePR(
+                approved=pr["reviewDecision"] == "APPROVED",
+                checks_passed=checks_passed,
                 dependency=dependency,
                 from_version=from_version,
-                to_version=to_version,
                 notes=pr["bodyText"],
+                to_version=to_version,
                 url=pr["url"],
             )
         )
@@ -137,11 +156,16 @@ def main():
         print("Version ranges:")
         for from_ver, to_ver in version_bumps:
             print(f"  {from_ver} -> {to_ver}")
-        print(f"Example URL: {updates[0].url}")
+
+        checks_passed = [u for u in updates if u.checks_passed]
+        checks_failed = [u for u in updates if not u.checks_passed]
+        print(f"Check status: {len(checks_passed)} passed, {len(checks_failed)} failed")
+        for failed in checks_failed:
+            print(f"  {failed.url} failed")
 
         while True:
             action = read_action(
-                "[m]erge all, [s]kip, [q]uit, [r]eview notes, [l]ist urls"
+                "[m]erge all passing, [s]kip, [q]uit, [r]eview notes, [l]ist PR urls"
             )
             if "quit".startswith(action):
                 return
