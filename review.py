@@ -39,14 +39,31 @@ class GitHubClient:
 @dataclass
 class DependencyUpdatePR:
     id: str
+    """ID of the pull request"""
+
     dependency: str
+    """Name of the dependency being updated"""
+
     from_version: str
+    """The version of the dependency that the PR is updating from"""
+
     to_version: str
+    """The version of the dependency that the PR updates to"""
+
     notes: str
+    """Release notes from the body of the PR description"""
+
     url: str
+    """URL of the pull request on GitHub"""
+
     approved: bool
+    """Whether this PR has been given an approving review"""
+
     checks_passed: bool
+    """Whether all status checks completed for the most recent commit"""
+
     merge_method: str
+    """The preferred merge method for this PR"""
 
 
 def parse_dependabot_pr_title(title: str) -> tuple[str, str, str]:
