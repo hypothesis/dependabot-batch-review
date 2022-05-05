@@ -46,6 +46,7 @@ class DependencyUpdatePR:
     url: str
     approved: bool
     checks_passed: bool
+    merge_method: str
 
 
 def parse_dependabot_pr_title(title: str) -> tuple[str, str, str]:
@@ -70,6 +71,7 @@ def fetch_dependency_prs(
           ... on PullRequest {{
             repository {{
               name
+              viewerDefaultMergeMethod
             }}
 
             id
@@ -110,6 +112,7 @@ def fetch_dependency_prs(
                 checks_passed=checks_passed,
                 dependency=dependency,
                 from_version=from_version,
+                merge_method=pr["repository"]["viewerDefaultMergeMethod"],
                 notes=pr["bodyText"],
                 to_version=to_version,
                 url=pr["url"],
@@ -119,7 +122,13 @@ def fetch_dependency_prs(
     return updates
 
 
-def merge_pr(gh: GitHubClient, pr_id: str):
+def merge_pr(gh: GitHubClient, pr_id: str, merge_method="MERGE"):
+    """
+    Merge a GitHub Pull Request.
+
+    :param merge_method: Merge strategy to use. See https://docs.github.com/en/graphql/reference/enums#pullrequestmergemethod
+    """
+
     merge_query = """
     mutation mergePullRequest($input: MergePullRequestInput!) {
       mergePullRequest(input: $input) {
@@ -130,7 +139,9 @@ def merge_pr(gh: GitHubClient, pr_id: str):
       }
     }
     """
-    gh.query(merge_query, {"input": {"pullRequestId": pr_id}})
+    gh.query(
+        merge_query, {"input": {"pullRequestId": pr_id, "mergeMethod": merge_method}}
+    )
 
 
 def read_action(prompt: str):
@@ -195,7 +206,9 @@ def main():
                 for update in checks_passed:
                     print(f"Merging {update.url}…")
                     try:
-                        merge_pr(gh_client, update.id)
+                        merge_pr(
+                            gh_client, pr_id=update.id, merge_method=update.merge_method
+                        )
                     except Exception as e:
                         print("Merge failed: ", repr(e))
                 break
