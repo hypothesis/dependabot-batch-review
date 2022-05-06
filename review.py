@@ -200,19 +200,33 @@ def merge_pr(gh: GitHubClient, pr_id: str, merge_method="MERGE"):
     )
 
 
-def read_action(prompt: str, default=None) -> str:
+def read_action(prompt: str, actions: list[str], default=None) -> str:
     """
     Read a command from the user.
 
+    The user can enter any action from `actions` or a prefix of one. Matching
+    is case-insensitive.
+
+    :param prompt: Prompt telling the user what commands are available
+    :param actions: List of actions the user can perform. These should all be lower-case.
     :param default: Default response in non-interactive environments
+    :return: Action from the `actions` list
     """
     if not os.isatty(sys.stdout.fileno()) and default:
         return default
 
-    action = ""
-    while not action:
-        action = input(f"{prompt}: ").strip()
-    return action
+    while True:
+        user_input = input(f"{prompt}: ").strip().lower()
+
+        # Look for an exact match
+        for action in actions:
+            if action == user_input:
+                return action
+
+        # If no exact match found, look for a prefix match
+        for action in actions:
+            if action.startswith(user_input):
+                return action
 
 
 def open_url(url: str):
@@ -272,12 +286,13 @@ def main():
 
         while True:
             action = read_action(
-                "[m]erge all passing, [s]kip, [q]uit, [r]eview notes, [l]ist PR urls",
+                prompt="[m]erge all passing, [s]kip, [q]uit, [r]eview notes, [l]ist PR urls",
+                actions=["merge", "skip", "quit", "review", "list"],
                 default="skip",
             )
-            if "quit".startswith(action):
+            if action == "quit":
                 return
-            elif "merge".startswith(action):
+            elif action == "merge":
                 for update in updates:
                     if update.check_status != CheckStatus.SUCCESS:
                         # Skip PRs with missing or failed checks
@@ -291,11 +306,11 @@ def main():
                     except Exception as e:
                         print("Merge failed: ", repr(e))
                 break
-            elif "skip".startswith(action):
+            elif action == "skip":
                 break
-            elif "review".startswith(action):
+            elif action == "review":
                 open_url(updates[0].url)
-            elif "list".startswith(action):
+            elif action == "list":
                 urls = sorted(u.url for u in updates)
                 for url in urls:
                     print(f"  {url}")
