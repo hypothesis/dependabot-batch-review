@@ -8,6 +8,7 @@ from typing import Any
 import subprocess
 import sys
 
+from blessings import Terminal  # type: ignore
 import requests
 
 
@@ -216,7 +217,7 @@ def read_action(prompt: str, actions: list[str], default=None) -> str:
         return default
 
     while True:
-        user_input = input(f"{prompt}: ").strip().lower()
+        user_input = input(f"{prompt} > ").strip().lower()
 
         # Look for an exact match
         for action in actions:
@@ -240,7 +241,7 @@ def review_updates(gh_client: GitHubClient, updates: list[DependencyUpdatePR]):
     """
 
     version_bumps = {(u.from_version, u.to_version) for u in updates}
-    print("Version ranges:")
+    print("Versions:")
     for from_ver, to_ver in version_bumps:
         print(f"  {from_ver} -> {to_ver}")
 
@@ -253,7 +254,7 @@ def review_updates(gh_client: GitHubClient, updates: list[DependencyUpdatePR]):
     check_statuses: list[str] = []
     for status, items in updates_by_status.items():
         check_statuses.append(f"{len(items)} {status.description}")
-    print(f"Check status: {', '.join(check_statuses)}")
+    print(f"Checks: {', '.join(check_statuses)}")
 
     for update in updates:
         if update.check_status == CheckStatus.SUCCESS:
@@ -301,8 +302,9 @@ def main():
 
     access_token = os.environ["GITHUB_TOKEN"]
     gh_client = GitHubClient(token=access_token)
+    t = Terminal()
 
-    print(f"Finding open Dependabot PRs for user or organization {args.organization}…")
+    print(f"Finding Dependabot PRs in {t.bold}{args.organization}{t.normal}'s repos…")
     updates = fetch_dependency_prs(gh_client, organization=args.organization)
 
     updates_by_dependency: dict[str, list[DependencyUpdatePR]] = {}
@@ -318,9 +320,7 @@ def main():
     for dep in deps:
         updates = updates_by_dependency[dep]
 
-        print(
-            f"{to_review} updates to review. Reviewing {len(updates)} updates for {dep}:"
-        )
+        print(f"{len(updates)} updates for {t.bold}{dep}{t.normal}:")
         review_updates(gh_client, updates)
 
         to_review -= len(updates)
