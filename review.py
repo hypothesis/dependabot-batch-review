@@ -1,10 +1,11 @@
 from argparse import ArgumentParser
 from dataclasses import dataclass
+from enum import Enum
 import json
 import re
 import os
 import time
-from typing import Any
+from typing import Any, Union
 import subprocess
 import sys
 
@@ -37,6 +38,32 @@ class GitHubClient:
         return body["data"]
 
 
+class CheckStatus(Enum):
+    """
+    Summary of the results of an automated check suite.
+
+    See https://docs.github.com/en/graphql/reference/objects#statuscheckrollup
+    and https://docs.github.com/en/graphql/reference/enums#statusstate.
+    """
+
+    SUCCESS = 1
+    FAILED = 2
+    MISSING = 3
+    PENDING = 4
+
+    @property
+    def description(self):
+        return check_status_descriptions[self]
+
+
+check_status_descriptions = {
+    CheckStatus.SUCCESS: "passed",
+    CheckStatus.FAILED: "failed",
+    CheckStatus.MISSING: "missing",
+    CheckStatus.PENDING: "pending",
+}
+
+
 @dataclass
 class DependencyUpdatePR:
     id: str
@@ -60,8 +87,8 @@ class DependencyUpdatePR:
     approved: bool
     """Whether this PR has been given an approving review"""
 
-    checks_passed: bool
-    """Whether all status checks completed for the most recent commit"""
+    check_status: CheckStatus
+    """The status of automated checks for this commit (eg. CI)"""
 
     merge_method: str
     """The preferred merge method for this PR"""
@@ -122,17 +149,24 @@ def fetch_dependency_prs(
         dependency, from_version, to_version = parse_dependabot_pr_title(pr["title"])
         status_check_rollup = pr["commits"]["nodes"][0]["commit"]["statusCheckRollup"]
 
-        # nb. If CI is not set up in a repository, `status_check_rollup` will
-        # be None, which we treat as checks failing.
-        checks_passed = status_check_rollup and (
-            status_check_rollup["state"] == "SUCCESS"
-        )
+        rollup_state = status_check_rollup["state"] if status_check_rollup else None
+        if rollup_state == "SUCCESS":
+            check_status = CheckStatus.SUCCESS
+        elif rollup_state == "PENDING" or rollup_state == "EXPECTED":
+            check_status = CheckStatus.PENDING
+        elif rollup_state == "ERROR" or rollup_state == "FAILURE":
+            check_status = CheckStatus.FAILED
+        elif rollup_state is not None:
+            # Any states we don't recognize are treated as failed
+            check_status = CheckStatus.FAILED
+        else:
+            check_status = CheckStatus.MISSING
 
         updates.append(
             DependencyUpdatePR(
                 id=pr["id"],
                 approved=pr["reviewDecision"] == "APPROVED",
-                checks_passed=checks_passed,
+                check_status=check_status,
                 dependency=dependency,
                 from_version=from_version,
                 merge_method=pr["repository"]["viewerDefaultMergeMethod"],
@@ -200,7 +234,7 @@ def main():
     print(f"Finding open Dependabot PRs for user or organization {args.organization}…")
     updates = fetch_dependency_prs(gh_client, organization=args.organization)
 
-    updates_by_dependency = {}
+    updates_by_dependency: dict[str, list[DependencyUpdatePR]] = {}
     for update in updates:
         if update.dependency not in updates_by_dependency:
             updates_by_dependency[update.dependency] = []
@@ -221,11 +255,21 @@ def main():
         for from_ver, to_ver in version_bumps:
             print(f"  {from_ver} -> {to_ver}")
 
-        checks_passed = [u for u in updates if u.checks_passed]
-        checks_failed = [u for u in updates if not u.checks_passed]
-        print(f"Check status: {len(checks_passed)} passed, {len(checks_failed)} failed")
-        for failed in checks_failed:
-            print(f"  {failed.url} failed")
+        updates_by_status: dict[CheckStatus, list[DependencyUpdatePR]] = {}
+        for update in updates:
+            if not update.check_status in updates_by_status:
+                updates_by_status[update.check_status] = []
+            updates_by_status[update.check_status].append(update)
+
+        check_statuses: list[str] = []
+        for status, updates in updates_by_status.items():
+            check_statuses.append(f"{len(updates)} {status.description}")
+        print(f"Check status: {', '.join(check_statuses)}")
+
+        for update in updates:
+            if update.check_status == CheckStatus.SUCCESS:
+                continue
+            print(f"  {update.url} checks {update.check_status.description}")
 
         while True:
             action = read_action(
@@ -235,8 +279,12 @@ def main():
             if "quit".startswith(action):
                 return
             elif "merge".startswith(action):
-                for update in checks_passed:
-                    print(f"Merging {update.url}…")
+                for update in updates:
+                    if update.check_status != CheckStatus.SUCCESS:
+                        # Skip PRs with missing or failed checks
+                        continue
+
+                    print(f"Merging {update.url} …")
                     try:
                         merge_pr(
                             gh_client, pr_id=update.id, merge_method=update.merge_method
