@@ -6,6 +6,8 @@ name = "pypi"
 [packages]
 requests = "*"
 blessings = "*"
+beautifulsoup4 = "*"
+types-beautifulsoup4 = "*"
 
 [dev-packages]
 black = "*"
