@@ -262,8 +262,8 @@ def main():
             updates_by_status[update.check_status].append(update)
 
         check_statuses: list[str] = []
-        for status, updates in updates_by_status.items():
-            check_statuses.append(f"{len(updates)} {status.description}")
+        for status, items in updates_by_status.items():
+            check_statuses.append(f"{len(items)} {status.description}")
         print(f"Check status: {', '.join(check_statuses)}")
 
         for update in updates:
