@@ -201,6 +201,14 @@ def merge_pr(gh: GitHubClient, pr_id: str, merge_method="MERGE"):
     )
 
 
+class PromptAbortError(Exception):
+    """
+    Exception raised if the user attempts to exit an interactive prompt.
+    """
+
+    pass
+
+
 def read_action(prompt: str, actions: list[str], default=None) -> str:
     """
     Read a command from the user.
@@ -217,7 +225,12 @@ def read_action(prompt: str, actions: list[str], default=None) -> str:
         return default
 
     while True:
-        user_input = input(f"{prompt} > ").strip().lower()
+        try:
+            user_input = input(f"{prompt} > ").strip().lower()
+        except EOFError as e:  # Ctrl+D
+            raise PromptAbortError() from e
+        except KeyboardInterrupt as e:  # Ctrl+C
+            raise PromptAbortError() from e
 
         # Look for an exact match
         for action in actions:
@@ -321,7 +334,11 @@ def main():
         updates = updates_by_dependency[dep]
 
         print(f"{len(updates)} updates for {t.bold}{dep}{t.normal}:")
-        review_updates(gh_client, updates)
+
+        try:
+            review_updates(gh_client, updates)
+        except PromptAbortError:
+            return
 
         to_review -= len(updates)
         print("")
