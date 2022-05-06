@@ -4,8 +4,7 @@ from enum import Enum
 import json
 import re
 import os
-import time
-from typing import Any, Union
+from typing import Any
 import subprocess
 import sys
 
@@ -97,7 +96,7 @@ class DependencyUpdatePR:
 def parse_dependabot_pr_title(title: str) -> tuple[str, str, str]:
     """Extract package and version info from a Dependabot PR."""
 
-    title_re = "Bump (\S+) from (\S+) to (\S+)"
+    title_re = r"Bump (\S+) from (\S+) to (\S+)"
     fields_match = re.search(title_re, title, re.IGNORECASE)
     if not fields_match:
         raise ValueError(f"Failed to parse tile '{title}'")
@@ -257,7 +256,7 @@ def main():
 
         updates_by_status: dict[CheckStatus, list[DependencyUpdatePR]] = {}
         for update in updates:
-            if not update.check_status in updates_by_status:
+            if update.check_status not in updates_by_status:
                 updates_by_status[update.check_status] = []
             updates_by_status[update.check_status].append(update)
 
