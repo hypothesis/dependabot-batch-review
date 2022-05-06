@@ -9,6 +9,7 @@ import subprocess
 import sys
 
 from blessings import Terminal  # type: ignore
+from bs4 import BeautifulSoup
 import requests
 
 
@@ -105,6 +106,23 @@ def parse_dependabot_pr_title(title: str) -> tuple[str, str, str]:
     return (dependency, from_version, to_version)
 
 
+def parse_dependabot_pr_body(html: str) -> str:
+    """
+    Extract release notes from the body of a Dependabot PR.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+
+    # The body of a Dependabot PR is a series of sections, each of which is
+    # wrapped in a `<details>` container. The final `<details>` container lists
+    # the standard commands which can be issued to the bot via comments on the PR.
+    details = [
+        d.get_text()
+        for d in soup.find_all("details")
+        if not d.get_text().strip().startswith("Dependabot commands and options")
+    ]
+    return "\n\n".join(details)
+
+
 def fetch_dependency_prs(
     gh: GitHubClient, organization: str, label="dependencies"
 ) -> list[DependencyUpdatePR]:
@@ -122,7 +140,7 @@ def fetch_dependency_prs(
             author { login }
             id
             title
-            bodyText
+            bodyHTML
             reviewDecision
             url
 
@@ -147,6 +165,7 @@ def fetch_dependency_prs(
     updates: list[DependencyUpdatePR] = []
     for pr in pull_requests:
         dependency, from_version, to_version = parse_dependabot_pr_title(pr["title"])
+        notes = parse_dependabot_pr_body(pr["bodyHTML"])
         status_check_rollup = pr["commits"]["nodes"][0]["commit"]["statusCheckRollup"]
 
         rollup_state = status_check_rollup["state"] if status_check_rollup else None
@@ -170,7 +189,7 @@ def fetch_dependency_prs(
                 dependency=dependency,
                 from_version=from_version,
                 merge_method=pr["repository"]["viewerDefaultMergeMethod"],
-                notes=pr["bodyText"],
+                notes=notes,
                 to_version=to_version,
                 url=pr["url"],
             )
@@ -276,8 +295,8 @@ def review_updates(gh_client: GitHubClient, updates: list[DependencyUpdatePR]):
 
     while True:
         action = read_action(
-            prompt="[m]erge all passing, [s]kip, [q]uit, [r]eview notes, [l]ist PR urls",
-            actions=["merge", "skip", "quit", "review", "list"],
+            prompt="[m]erge all passing, [s]kip, [q]uit, [r]eview changes, [v]iew in browser, [l]ist URLs",
+            actions=["merge", "skip", "quit", "review", "list", "view"],
             default="skip",
         )
         if action == "quit":
@@ -299,6 +318,10 @@ def review_updates(gh_client: GitHubClient, updates: list[DependencyUpdatePR]):
         elif action == "skip":
             break
         elif action == "review":
+            notes = updates[0].notes
+            for line in notes.splitlines():
+                print(f"  {line}")
+        elif action == "view":
             open_url(updates[0].url)
         elif action == "list":
             urls = sorted(u.url for u in updates)
