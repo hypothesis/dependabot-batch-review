@@ -10,13 +10,15 @@ requests = "*"
 black = "*"
 mypy = "*"
 types-requests = "*"
+flake8 = "*"
 
 [requires]
 python_version = "3.9"
 
 [scripts]
-qa = "sh -c 'pipenv run checkformat && pipenv run typecheck'"
+qa = "sh -c 'pipenv run checkformat && pipenv run typecheck && pipenv run lint'"
 checkformat = "black --check ."
+lint = "flake8 --ignore E501"
 format = "black ."
 typecheck = "mypy ."
 review = "python review.py"
