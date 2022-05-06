@@ -234,6 +234,64 @@ def open_url(url: str):
     subprocess.call(["open", url])
 
 
+def review_updates(gh_client: GitHubClient, updates: list[DependencyUpdatePR]):
+    """
+    Perform an interactive review/merge of a batch of updates for a dependency.
+    """
+
+    version_bumps = {(u.from_version, u.to_version) for u in updates}
+    print("Version ranges:")
+    for from_ver, to_ver in version_bumps:
+        print(f"  {from_ver} -> {to_ver}")
+
+    updates_by_status: dict[CheckStatus, list[DependencyUpdatePR]] = {}
+    for update in updates:
+        if update.check_status not in updates_by_status:
+            updates_by_status[update.check_status] = []
+        updates_by_status[update.check_status].append(update)
+
+    check_statuses: list[str] = []
+    for status, items in updates_by_status.items():
+        check_statuses.append(f"{len(items)} {status.description}")
+    print(f"Check status: {', '.join(check_statuses)}")
+
+    for update in updates:
+        if update.check_status == CheckStatus.SUCCESS:
+            continue
+        print(f"  {update.url} checks {update.check_status.description}")
+
+    while True:
+        action = read_action(
+            prompt="[m]erge all passing, [s]kip, [q]uit, [r]eview notes, [l]ist PR urls",
+            actions=["merge", "skip", "quit", "review", "list"],
+            default="skip",
+        )
+        if action == "quit":
+            return
+        elif action == "merge":
+            for update in updates:
+                if update.check_status != CheckStatus.SUCCESS:
+                    # Skip PRs with missing or failed checks
+                    continue
+
+                print(f"Merging {update.url} …")
+                try:
+                    merge_pr(
+                        gh_client, pr_id=update.id, merge_method=update.merge_method
+                    )
+                except Exception as e:
+                    print("Merge failed: ", repr(e))
+            break
+        elif action == "skip":
+            break
+        elif action == "review":
+            open_url(updates[0].url)
+        elif action == "list":
+            urls = sorted(u.url for u in updates)
+            for url in urls:
+                print(f"  {url}")
+
+
 def main():
     parser = ArgumentParser()
     parser.add_argument(
@@ -259,61 +317,11 @@ def main():
     to_review = len(updates)
     for dep in deps:
         updates = updates_by_dependency[dep]
-        version_bumps = {(u.from_version, u.to_version) for u in updates}
 
         print(
             f"{to_review} updates to review. Reviewing {len(updates)} updates for {dep}:"
         )
-        print("Version ranges:")
-        for from_ver, to_ver in version_bumps:
-            print(f"  {from_ver} -> {to_ver}")
-
-        updates_by_status: dict[CheckStatus, list[DependencyUpdatePR]] = {}
-        for update in updates:
-            if update.check_status not in updates_by_status:
-                updates_by_status[update.check_status] = []
-            updates_by_status[update.check_status].append(update)
-
-        check_statuses: list[str] = []
-        for status, items in updates_by_status.items():
-            check_statuses.append(f"{len(items)} {status.description}")
-        print(f"Check status: {', '.join(check_statuses)}")
-
-        for update in updates:
-            if update.check_status == CheckStatus.SUCCESS:
-                continue
-            print(f"  {update.url} checks {update.check_status.description}")
-
-        while True:
-            action = read_action(
-                prompt="[m]erge all passing, [s]kip, [q]uit, [r]eview notes, [l]ist PR urls",
-                actions=["merge", "skip", "quit", "review", "list"],
-                default="skip",
-            )
-            if action == "quit":
-                return
-            elif action == "merge":
-                for update in updates:
-                    if update.check_status != CheckStatus.SUCCESS:
-                        # Skip PRs with missing or failed checks
-                        continue
-
-                    print(f"Merging {update.url} …")
-                    try:
-                        merge_pr(
-                            gh_client, pr_id=update.id, merge_method=update.merge_method
-                        )
-                    except Exception as e:
-                        print("Merge failed: ", repr(e))
-                break
-            elif action == "skip":
-                break
-            elif action == "review":
-                open_url(updates[0].url)
-            elif action == "list":
-                urls = sorted(u.url for u in updates)
-                for url in urls:
-                    print(f"  {url}")
+        review_updates(gh_client, updates)
 
         to_review -= len(updates)
         print("")
