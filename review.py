@@ -4,7 +4,7 @@ from enum import Enum
 import json
 import re
 import os
-from typing import Any
+from typing import Any, Optional
 import subprocess
 import sys
 
@@ -20,7 +20,7 @@ class GitHubClient:
     See https://docs.github.com/en/graphql.
     """
 
-    def __init__(self, token: str):
+    def __init__(self, token: str) -> None:
         self.token = token
         self.endpoint = "https://api.github.com/graphql"
 
@@ -53,7 +53,7 @@ class CheckStatus(Enum):
     PENDING = 4
 
     @property
-    def description(self):
+    def description(self) -> str:
         return check_status_descriptions[self]
 
 
@@ -124,7 +124,7 @@ def parse_dependabot_pr_body(html: str) -> str:
 
 
 def fetch_dependency_prs(
-    gh: GitHubClient, organization: str, label="dependencies"
+    gh: GitHubClient, organization: str, label: str = "dependencies"
 ) -> list[DependencyUpdatePR]:
     dependencies_query = """
     query($query: String!) {
@@ -198,7 +198,7 @@ def fetch_dependency_prs(
     return updates
 
 
-def merge_pr(gh: GitHubClient, pr_id: str, merge_method="MERGE"):
+def merge_pr(gh: GitHubClient, pr_id: str, merge_method: str = "MERGE") -> None:
     """
     Merge a GitHub Pull Request.
 
@@ -228,7 +228,7 @@ class PromptAbortError(Exception):
     pass
 
 
-def read_action(prompt: str, actions: list[str], default=None) -> str:
+def read_action(prompt: str, actions: list[str], default: Optional[str] = None) -> str:
     """
     Read a command from the user.
 
@@ -262,12 +262,12 @@ def read_action(prompt: str, actions: list[str], default=None) -> str:
                 return action
 
 
-def open_url(url: str):
+def open_url(url: str) -> None:
     """Open a URL in the user's default browser."""
     subprocess.call(["open", url])
 
 
-def review_updates(gh_client: GitHubClient, updates: list[DependencyUpdatePR]):
+def review_updates(gh_client: GitHubClient, updates: list[DependencyUpdatePR]) -> None:
     """
     Perform an interactive review/merge of a batch of updates for a dependency.
     """
@@ -329,7 +329,7 @@ def review_updates(gh_client: GitHubClient, updates: list[DependencyUpdatePR]):
                 print(f"  {url}")
 
 
-def main():
+def main() -> int:
     parser = ArgumentParser()
     parser.add_argument(
         "organization", help="GitHub user or organization to search for Dependabot PRs"
@@ -361,11 +361,13 @@ def main():
         try:
             review_updates(gh_client, updates)
         except PromptAbortError:
-            return
+            return 0
 
         to_review -= len(updates)
         print("")
 
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
