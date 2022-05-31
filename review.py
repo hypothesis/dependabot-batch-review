@@ -320,8 +320,12 @@ def review_updates(gh_client: GitHubClient, updates: list[DependencyUpdatePR]) -
         elif action == "skip":
             break
         elif action == "review":
-            notes = updates[0].notes
-            for line in notes.splitlines():
+            notes = updates[0].notes.splitlines()
+            max_lines = 35
+            if len(notes) > max_lines:
+                notes = notes[0:max_lines]
+                notes.append('... (Enter "view" to see full notes in browser)')
+            for line in notes:
                 print(f"  {line}")
         elif action == "view":
             open_url(updates[0].url)
