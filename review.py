@@ -124,7 +124,7 @@ def parse_dependabot_pr_body(html: str) -> str:
 
 
 def fetch_dependency_prs(
-    gh: GitHubClient, organization: str, label: str = "dependencies"
+    gh: GitHubClient, organization: str, labels: list[str] = ["dependencies"]
 ) -> list[DependencyUpdatePR]:
     dependencies_query = """
     query($query: String!) {
@@ -158,7 +158,9 @@ def fetch_dependency_prs(
       }
     }
     """
-    query = f"org:{organization} label:{label} is:pr is:open author:app/dependabot"
+
+    label_terms = " ".join(f"label:{label}" for label in labels)
+    query = f"org:{organization} {label_terms} is:pr is:open author:app/dependabot"
     result = gh.query(query=dependencies_query, variables={"query": query})
     pull_requests = result["search"]["nodes"]
 
@@ -334,6 +336,13 @@ def main() -> int:
     parser.add_argument(
         "organization", help="GitHub user or organization to search for Dependabot PRs"
     )
+    parser.add_argument(
+        "--label",
+        "-l",
+        default=[],
+        nargs="*",
+        help="Specify additional labels to filter PRs",
+    )
     args = parser.parse_args()
 
     access_token = os.environ["GITHUB_TOKEN"]
@@ -341,7 +350,14 @@ def main() -> int:
     t = Terminal()
 
     print(f"Finding Dependabot PRs in {t.bold}{args.organization}{t.normal}'s repos…")
-    updates = fetch_dependency_prs(gh_client, organization=args.organization)
+
+    labels = ["dependencies"]
+    for label in args.label:
+        labels.append(label)
+
+    updates = fetch_dependency_prs(
+        gh_client, organization=args.organization, labels=labels
+    )
 
     updates_by_dependency: dict[str, list[DependencyUpdatePR]] = {}
     for update in updates:

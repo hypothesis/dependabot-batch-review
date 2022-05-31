@@ -55,6 +55,11 @@ Check status: 1 passed, 0 failed
 [m]erge all passing, [s]kip, [q]uit, [r]eview notes, [l]ist PR urls:
 ```
 
+To filter PRs by language, you can add `--label <language>`, assuming that
+Dependabot is using the default configuration which adds a language-specific
+label to PRs it creates. For example, `--label javascript` would find only PRs
+that update npm dependencies.
+
 ## Limitations
 
 This tool currently only fetches up to 100 PRs per run. To continue reviewing
