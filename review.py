@@ -73,6 +73,9 @@ class DependencyUpdatePR:
     dependency: str
     """Name of the dependency being updated"""
 
+    package_type: str
+    """Type of package (pip, npm etc.)"""
+
     from_version: str
     """The version of the dependency that the PR is updating from"""
 
@@ -123,8 +126,24 @@ def parse_dependabot_pr_body(html: str) -> str:
     return "\n\n".join(details)
 
 
+def parse_package_type_from_branch_name(branch: str) -> str:
+    """
+    Extract package type information from Dependabot PR.
+
+    This relies on Dependabot PRs using branch names of the form `dependabot/{package_type}/{package_name}-{version}`
+    """
+    branch_name_re = "^dependabot/([^/]+)/.*"
+    branch_name_match = re.search(branch_name_re, branch)
+    if not branch_name_match:
+        raise ValueError(f"Failed to parse branch name '{branch}'")
+    package_type = branch_name_match.groups()[0]
+    return package_type
+
+
 def fetch_dependency_prs(
-    gh: GitHubClient, organization: str, labels: list[str] = ["dependencies"]
+    gh: GitHubClient,
+    organization: str,
+    labels: list[str] = ["dependencies"],
 ) -> list[DependencyUpdatePR]:
     dependencies_query = """
     query($query: String!) {
@@ -141,6 +160,7 @@ def fetch_dependency_prs(
             id
             title
             bodyHTML
+            headRefName
             reviewDecision
             url
 
@@ -169,6 +189,7 @@ def fetch_dependency_prs(
         dependency, from_version, to_version = parse_dependabot_pr_title(pr["title"])
         notes = parse_dependabot_pr_body(pr["bodyHTML"])
         status_check_rollup = pr["commits"]["nodes"][0]["commit"]["statusCheckRollup"]
+        package_type = parse_package_type_from_branch_name(pr["headRefName"])
 
         rollup_state = status_check_rollup["state"] if status_check_rollup else None
         if rollup_state == "SUCCESS":
@@ -192,6 +213,7 @@ def fetch_dependency_prs(
                 from_version=from_version,
                 merge_method=pr["repository"]["viewerDefaultMergeMethod"],
                 notes=notes,
+                package_type=package_type,
                 to_version=to_version,
                 url=pr["url"],
             )
@@ -347,6 +369,9 @@ def main() -> int:
         nargs="*",
         help="Specify additional labels to filter PRs",
     )
+    parser.add_argument(
+        "--type", "-t", help="""Specify package type (eg. "npm_and_yarn", "pip")"""
+    )
     args = parser.parse_args()
 
     access_token = os.environ["GITHUB_TOKEN"]
@@ -362,6 +387,9 @@ def main() -> int:
     updates = fetch_dependency_prs(
         gh_client, organization=args.organization, labels=labels
     )
+
+    if args.type:
+        updates = [u for u in updates if u.package_type == args.type]
 
     updates_by_dependency: dict[str, list[DependencyUpdatePR]] = {}
     for update in updates:

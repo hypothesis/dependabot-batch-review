@@ -55,10 +55,14 @@ Check status: 1 passed, 0 failed
 [m]erge all passing, [s]kip, [q]uit, [r]eview notes, [l]ist PR urls:
 ```
 
-To filter PRs by language, you can add `--label <language>`, assuming that
-Dependabot is using the default configuration which adds a language-specific
-label to PRs it creates. For example, `--label javascript` would find only PRs
-that update npm dependencies.
+There are several options to filter PRs:
+
+- `--label <label>` finds PRs with a specific label. By default Dependabot adds
+  a label for the language (eg. "javascript").
+- `--type <type>` finds PRs that update a specific type of package. Type values
+  come from the branch names of Dependabot PRs, which have the form
+  `dependabot/{package_type}/{package_name}-{version}`. For example "pip" or
+  "npm_and_yarn".
 
 ## Limitations
 
