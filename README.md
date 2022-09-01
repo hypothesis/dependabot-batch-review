@@ -59,6 +59,7 @@ There are several options to filter PRs:
 
 - `--label <label>` finds PRs with a specific label. By default Dependabot adds
   a label for the language (eg. "javascript").
+- `--repo-filter <pattern>` finds PRs only in repositories that match a given pattern
 - `--type <type>` finds PRs that update a specific type of package. Type values
   come from the branch names of Dependabot PRs, which have the form
   `dependabot/{package_type}/{package_name}-{version}`. For example "pip" or

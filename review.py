@@ -143,6 +143,7 @@ def parse_package_type_from_branch_name(branch: str) -> str:
 def fetch_dependency_prs(
     gh: GitHubClient,
     organization: str,
+    repo_filter: Optional[str] = None,
     labels: list[str] = ["dependencies"],
 ) -> list[DependencyUpdatePR]:
     dependencies_query = """
@@ -186,6 +187,12 @@ def fetch_dependency_prs(
 
     updates: list[DependencyUpdatePR] = []
     for pr in pull_requests:
+        repo = pr["repository"]["name"]
+
+        if repo_filter is not None:
+            if repo_filter not in repo:
+                continue
+
         dependency, from_version, to_version = parse_dependabot_pr_title(pr["title"])
         notes = parse_dependabot_pr_body(pr["bodyHTML"])
         status_check_rollup = pr["commits"]["nodes"][0]["commit"]["statusCheckRollup"]
@@ -370,6 +377,9 @@ def main() -> int:
         help="Specify additional labels to filter PRs",
     )
     parser.add_argument(
+        "--repo-filter", "-r", help="Filter PRs against a repository pattern"
+    )
+    parser.add_argument(
         "--type", "-t", help="""Specify package type (eg. "npm_and_yarn", "pip")"""
     )
     args = parser.parse_args()
@@ -385,7 +395,10 @@ def main() -> int:
         labels.append(label)
 
     updates = fetch_dependency_prs(
-        gh_client, organization=args.organization, labels=labels
+        gh_client,
+        organization=args.organization,
+        labels=labels,
+        repo_filter=args.repo_filter,
     )
 
     if args.type:
