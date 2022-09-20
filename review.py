@@ -193,10 +193,20 @@ def fetch_dependency_prs(
             if repo_filter not in repo:
                 continue
 
-        dependency, from_version, to_version = parse_dependabot_pr_title(pr["title"])
-        notes = parse_dependabot_pr_body(pr["bodyHTML"])
-        status_check_rollup = pr["commits"]["nodes"][0]["commit"]["statusCheckRollup"]
-        package_type = parse_package_type_from_branch_name(pr["headRefName"])
+        try:
+            dependency, from_version, to_version = parse_dependabot_pr_title(
+                pr["title"]
+            )
+            notes = parse_dependabot_pr_body(pr["bodyHTML"])
+            status_check_rollup = pr["commits"]["nodes"][0]["commit"][
+                "statusCheckRollup"
+            ]
+            package_type = parse_package_type_from_branch_name(pr["headRefName"])
+        except ValueError:
+            print(
+                f"Failed to parse dependency details from {pr['url']}", file=sys.stderr
+            )
+            continue
 
         rollup_state = status_check_rollup["state"] if status_check_rollup else None
         if rollup_state == "SUCCESS":
