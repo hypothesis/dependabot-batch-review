@@ -156,8 +156,6 @@ def parse_dependabot_pr(title: str, body: str) -> DependencyUpdateDetails:
             if not d.get_text().strip().startswith("Dependabot commands and options")
         ]
 
-        notes = "\n\n".join(details)
-
         return DependencyUpdateDetails(
             group_name=dependency,
             is_group=False,
@@ -166,7 +164,7 @@ def parse_dependabot_pr(title: str, body: str) -> DependencyUpdateDetails:
                     name=dependency,
                     from_version=from_version,
                     to_version=to_version,
-                    notes=notes,
+                    notes="\n\n".join(details),
                 )
             ],
         )
@@ -189,8 +187,8 @@ def parse_dependabot_pr(title: str, body: str) -> DependencyUpdateDetails:
 
     update_heading_pat = r"Updates (\S+) from (\S+) to (\S+)"
 
-    def is_update_heading(el: PageElement):
-        return re.match(update_heading_pat, el.get_text())
+    def is_update_heading(el: PageElement) -> bool:
+        return re.match(update_heading_pat, el.get_text()) is not None
 
     headings = [p for p in soup.find_all("p") if is_update_heading(p)]
 
@@ -218,7 +216,7 @@ def parse_dependabot_pr(title: str, body: str) -> DependencyUpdateDetails:
             from_version = None
             to_version = None
 
-        notes = []
+        notes: list[str] = []
 
         # Gather notes from `<details>` elements following the heading, until
         # we come to the next heading or the `<hr>` that separates the
@@ -427,8 +425,8 @@ def review_updates(gh_client: GitHubClient, prs: list[DependencyUpdatePR]) -> No
 
     version_bumps = set()
     for pr in prs:
-        for update in pr.updates:
-            version_bumps.add((update.name, update.from_version, update.to_version))
+        for u in pr.updates:
+            version_bumps.add((u.name, u.from_version, u.to_version))
 
     print("Versions:")
     for name, from_ver, to_ver in version_bumps:
@@ -478,8 +476,8 @@ def review_updates(gh_client: GitHubClient, prs: list[DependencyUpdatePR]) -> No
             break
         elif action == "review":
             notes = []
-            for update in prs[0].updates:
-                notes += update.notes.splitlines()
+            for u in prs[0].updates:
+                notes += u.notes.splitlines()
             max_lines = 35
             if len(notes) > max_lines:
                 notes = notes[0:max_lines]
