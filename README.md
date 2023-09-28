@@ -48,12 +48,37 @@ $ pipenv run review hypothesis
 Finding open Dependabot PRs for user or organization hypothesis…
 Found 11 PRs for 7 dependencies
 
-11 updates to review. Reviewing 1 updates for @babel/core:
-Version ranges:
-  7.17.9 -> 7.17.10
+1 updates for dependency @babel/core:
+Versions: 
+  @babel/core 7.17.9 -> 7.17.10
 Check status: 1 passed, 0 failed
 [m]erge all passing, [s]kip, [q]uit, [r]eview notes, [l]ist PR urls:
 ```
+
+### Grouped updates
+
+When using Dependabot's [grouped
+updates](https://github.blog/changelog/2023-06-30-grouped-version-updates-for-dependabot-public-beta/)
+feature, this tool will treat the group name of a PR like a package name for the
+purposes of grouping PRs across repositories.
+
+If for example you had configured a group called "babel" in multiple
+repositories which matched all npm dependencies whose name matches the pattern
+"@babel/", then this tool would group together all the PRs that updated the
+"babel" group across different repositories.
+
+```shellsession
+1 updates for group babel:
+Versions:
+  @babel/preset-typescript 7.22.15 -> 7.23.0
+  @babel/core 7.22.17 -> 7.23.0
+Checks: 1 passed
+```
+
+In this example, there is one PR updating a group called "babel", which updates
+two different packages.
+
+### Filtering updates
 
 There are several options to filter PRs:
 
