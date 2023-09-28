@@ -70,11 +70,19 @@ class DependencyUpdate:
     name: str
     """Name of the dependency being updated."""
 
-    from_version: str
-    """The version of the dependency before the update."""
+    from_version: Optional[str]
+    """
+    The version of the dependency before the update.
 
-    to_version: str
-    """The version of the dependency after the update."""
+    May be `None` if the version could not be found in the PR details.
+    """
+
+    to_version: Optional[str]
+    """
+    The version of the dependency after the update.
+
+    May be `None` if the version could not be found in the PR details.
+    """
 
     notes: str
     """Release notes for this update."""
@@ -164,15 +172,19 @@ def parse_dependabot_pr(title: str, body: str) -> DependencyUpdateDetails:
         )
 
     # PRs that update a group have a title of the form "Bump the foo group with
-    # 2 updates: bar and baz".
+    # 2 updates".
     #
     # For each update there is a paragraph in the body with the text "Updates
     # bar from 1.0.0 to 2.0.0" followed by `<details>` sections for release
     # notes, changelog and commits.
+    #
+    # As an exception, if there is only one update, the "Updates bar ..."
+    # paragraph is omitted and instead there is a paragraph with the text
+    # "Bumps the foo group with 1 update: bar".
     group_title_re = r"Bump the (\S+) group"
     group_title_match = re.search(group_title_re, title, re.IGNORECASE)
     if not group_title_match:
-        raise ValueError("Failed to parse details from PR")
+        raise ValueError("PR title does not match known patterns")
     (group_title,) = group_title_match.groups()
 
     update_heading_pat = r"Updates (\S+) from (\S+) to (\S+)"
@@ -181,12 +193,31 @@ def parse_dependabot_pr(title: str, body: str) -> DependencyUpdateDetails:
         return re.match(update_heading_pat, el.get_text())
 
     headings = [p for p in soup.find_all("p") if is_update_heading(p)]
-    updates = []
 
+    # Handle case of a single update where the "Updates ..." headings are
+    # missing.
+    single_update_pat = r"Bumps the \S+ group with 1 update: (\S+)"
+    if not headings:
+        headings = [
+            p for p in soup.find_all("p") if re.match(single_update_pat, p.get_text())
+        ]
+        if not headings:
+            raise ValueError("Package names not found in PR body")
+
+    updates = []
     for heading in headings:
         fields_match = re.search(update_heading_pat, heading.get_text(), re.IGNORECASE)
-        assert fields_match
-        dependency, from_version, to_version = fields_match.groups()
+        if fields_match:
+            dependency, from_version, to_version = fields_match.groups()
+        else:
+            fields_match = re.search(
+                single_update_pat, heading.get_text(), re.IGNORECASE
+            )
+            assert fields_match
+            (dependency,) = fields_match.groups()
+            from_version = None
+            to_version = None
+
         notes = []
 
         # Gather notes from `<details>` elements following the heading, until
@@ -287,7 +318,7 @@ def fetch_dependency_prs(
             ]
             package_type = parse_package_type_from_branch_name(pr["headRefName"])
         except ValueError as exc:
-            print(f"Failed to parse details from {pr['url']}", file=sys.stderr)
+            print(f"Failed to parse details from {pr['url']}: {exc}", file=sys.stderr)
             continue
 
         rollup_state = status_check_rollup["state"] if status_check_rollup else None
@@ -401,6 +432,8 @@ def review_updates(gh_client: GitHubClient, prs: list[DependencyUpdatePR]) -> No
 
     print("Versions:")
     for name, from_ver, to_ver in version_bumps:
+        from_ver = from_ver or "(unknown)"
+        to_ver = to_ver or "(unknown)"
         print(f"  {name} {from_ver} -> {to_ver}")
 
     updates_by_status: dict[CheckStatus, list[DependencyUpdatePR]] = {}
