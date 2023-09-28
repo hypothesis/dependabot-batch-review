@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 from blessings import Terminal  # type: ignore
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, PageElement
 import requests
 
 
@@ -66,24 +66,36 @@ check_status_descriptions = {
 
 
 @dataclass
+class DependencyUpdate:
+    name: str
+    """Name of the dependency being updated."""
+
+    from_version: str
+    """The version of the dependency before the update."""
+
+    to_version: str
+    """The version of the dependency after the update."""
+
+    notes: str
+    """Release notes for this update."""
+
+
+@dataclass
 class DependencyUpdatePR:
     id: str
     """ID of the pull request"""
 
-    dependency: str
-    """Name of the dependency being updated"""
-
     package_type: str
     """Type of package (pip, npm etc.)"""
 
-    from_version: str
-    """The version of the dependency that the PR is updating from"""
+    is_group: bool
+    """True if this an update of a group of dependencies."""
 
-    to_version: str
-    """The version of the dependency that the PR updates to"""
+    group_name: str
+    """Name of the dependency or group of dependencies updated in this PR."""
 
-    notes: str
-    """Release notes from the body of the PR description"""
+    updates: list[DependencyUpdate]
+    """The updates included in this PR."""
 
     url: str
     """URL of the pull request on GitHub"""
@@ -98,32 +110,107 @@ class DependencyUpdatePR:
     """The preferred merge method for this PR"""
 
 
-def parse_dependabot_pr_title(title: str) -> tuple[str, str, str]:
-    """Extract package and version info from a Dependabot PR."""
+@dataclass
+class DependencyUpdateDetails:
+    """
+    Details about contents of PR extracted from title and body.
 
+    This is a subset of `DependencyUpdatePR`.
+    """
+
+    group_name: str
+    is_group: bool
+    updates: list[DependencyUpdate]
+
+
+def parse_dependabot_pr(title: str, body: str) -> DependencyUpdateDetails:
+    """
+    Extract information about updates in a Dependabot PR.
+
+    :param title: PR title
+    :param body: HTML body of PR
+    """
+    soup = BeautifulSoup(body, "html.parser")
+
+    # PRs that update a single dependency have a title such as "Bump foo from
+    # 1.0.0 to 2.0.0" at the top.
     title_re = r"Bump (\S+) from (\S+) to (\S+)"
     fields_match = re.search(title_re, title, re.IGNORECASE)
-    if not fields_match:
-        raise ValueError(f"Failed to parse tile '{title}'")
-    dependency, from_version, to_version = fields_match.groups()
-    return (dependency, from_version, to_version)
+    if fields_match:
+        dependency, from_version, to_version = fields_match.groups()
 
+        # The body of a Dependabot PR is a series of sections, each of which is
+        # wrapped in a `<details>` container. The final `<details>` container lists
+        # the standard commands which can be issued to the bot via comments on the PR.
+        details = [
+            d.get_text()
+            for d in soup.find_all("details")
+            if not d.get_text().strip().startswith("Dependabot commands and options")
+        ]
 
-def parse_dependabot_pr_body(html: str) -> str:
-    """
-    Extract release notes from the body of a Dependabot PR.
-    """
-    soup = BeautifulSoup(html, "html.parser")
+        notes = "\n\n".join(details)
 
-    # The body of a Dependabot PR is a series of sections, each of which is
-    # wrapped in a `<details>` container. The final `<details>` container lists
-    # the standard commands which can be issued to the bot via comments on the PR.
-    details = [
-        d.get_text()
-        for d in soup.find_all("details")
-        if not d.get_text().strip().startswith("Dependabot commands and options")
-    ]
-    return "\n\n".join(details)
+        return DependencyUpdateDetails(
+            group_name=dependency,
+            is_group=False,
+            updates=[
+                DependencyUpdate(
+                    name=dependency,
+                    from_version=from_version,
+                    to_version=to_version,
+                    notes=notes,
+                )
+            ],
+        )
+
+    # PRs that update a group have a title of the form "Bump the foo group with
+    # 2 updates: bar and baz".
+    #
+    # For each update there is a paragraph in the body with the text "Updates
+    # bar from 1.0.0 to 2.0.0" followed by `<details>` sections for release
+    # notes, changelog and commits.
+    group_title_re = r"Bump the (\S+) group"
+    group_title_match = re.search(group_title_re, title, re.IGNORECASE)
+    if not group_title_match:
+        raise ValueError("Failed to parse details from PR")
+    (group_title,) = group_title_match.groups()
+
+    update_heading_pat = r"Updates (\S+) from (\S+) to (\S+)"
+
+    def is_update_heading(el: PageElement):
+        return re.match(update_heading_pat, el.get_text())
+
+    headings = [p for p in soup.find_all("p") if is_update_heading(p)]
+    updates = []
+
+    for heading in headings:
+        fields_match = re.search(update_heading_pat, heading.get_text(), re.IGNORECASE)
+        assert fields_match
+        dependency, from_version, to_version = fields_match.groups()
+        notes = []
+
+        # Gather notes from `<details>` elements following the heading, until
+        # we come to the next heading or the `<hr>` that separates the
+        # update-specific notes from the general Dependabot commands and
+        # options.
+        curr = heading.next_sibling
+        while curr and not is_update_heading(curr) and curr.name != "hr":
+            if curr.name == "details":
+                notes.append(curr.get_text())
+            curr = curr.next_sibling
+
+        updates.append(
+            DependencyUpdate(
+                name=dependency,
+                from_version=from_version,
+                to_version=to_version,
+                notes="\n\n".join(notes),
+            )
+        )
+
+    return DependencyUpdateDetails(
+        group_name=group_title, is_group=True, updates=updates
+    )
 
 
 def parse_package_type_from_branch_name(branch: str) -> str:
@@ -194,18 +281,13 @@ def fetch_dependency_prs(
                 continue
 
         try:
-            dependency, from_version, to_version = parse_dependabot_pr_title(
-                pr["title"]
-            )
-            notes = parse_dependabot_pr_body(pr["bodyHTML"])
+            update_details = parse_dependabot_pr(pr["title"], pr["bodyHTML"])
             status_check_rollup = pr["commits"]["nodes"][0]["commit"][
                 "statusCheckRollup"
             ]
             package_type = parse_package_type_from_branch_name(pr["headRefName"])
-        except ValueError:
-            print(
-                f"Failed to parse dependency details from {pr['url']}", file=sys.stderr
-            )
+        except ValueError as exc:
+            print(f"Failed to parse details from {pr['url']}", file=sys.stderr)
             continue
 
         rollup_state = status_check_rollup["state"] if status_check_rollup else None
@@ -224,14 +306,13 @@ def fetch_dependency_prs(
         updates.append(
             DependencyUpdatePR(
                 id=pr["id"],
+                is_group=update_details.is_group,
+                group_name=update_details.group_name,
                 approved=pr["reviewDecision"] == "APPROVED",
                 check_status=check_status,
-                dependency=dependency,
-                from_version=from_version,
+                updates=update_details.updates,
                 merge_method=pr["repository"]["viewerDefaultMergeMethod"],
-                notes=notes,
                 package_type=package_type,
-                to_version=to_version,
                 url=pr["url"],
             )
         )
@@ -308,18 +389,22 @@ def open_url(url: str) -> None:
     subprocess.call(["open", url])
 
 
-def review_updates(gh_client: GitHubClient, updates: list[DependencyUpdatePR]) -> None:
+def review_updates(gh_client: GitHubClient, prs: list[DependencyUpdatePR]) -> None:
     """
     Perform an interactive review/merge of a batch of updates for a dependency.
     """
 
-    version_bumps = {(u.from_version, u.to_version) for u in updates}
+    version_bumps = set()
+    for pr in prs:
+        for update in pr.updates:
+            version_bumps.add((update.name, update.from_version, update.to_version))
+
     print("Versions:")
-    for from_ver, to_ver in version_bumps:
-        print(f"  {from_ver} -> {to_ver}")
+    for name, from_ver, to_ver in version_bumps:
+        print(f"  {name} {from_ver} -> {to_ver}")
 
     updates_by_status: dict[CheckStatus, list[DependencyUpdatePR]] = {}
-    for update in updates:
+    for update in prs:
         if update.check_status not in updates_by_status:
             updates_by_status[update.check_status] = []
         updates_by_status[update.check_status].append(update)
@@ -329,7 +414,7 @@ def review_updates(gh_client: GitHubClient, updates: list[DependencyUpdatePR]) -
         check_statuses.append(f"{len(items)} {status.description}")
     print(f"Checks: {', '.join(check_statuses)}")
 
-    for update in updates:
+    for update in prs:
         if update.check_status == CheckStatus.SUCCESS:
             continue
         print(f"  {update.url} checks {update.check_status.description}")
@@ -343,7 +428,7 @@ def review_updates(gh_client: GitHubClient, updates: list[DependencyUpdatePR]) -
         if action == "quit":
             return
         elif action == "merge":
-            for update in updates:
+            for update in prs:
                 if update.check_status != CheckStatus.SUCCESS:
                     # Skip PRs with missing or failed checks
                     continue
@@ -359,7 +444,9 @@ def review_updates(gh_client: GitHubClient, updates: list[DependencyUpdatePR]) -
         elif action == "skip":
             break
         elif action == "review":
-            notes = updates[0].notes.splitlines()
+            notes = []
+            for update in prs[0].updates:
+                notes += update.notes.splitlines()
             max_lines = 35
             if len(notes) > max_lines:
                 notes = notes[0:max_lines]
@@ -367,9 +454,9 @@ def review_updates(gh_client: GitHubClient, updates: list[DependencyUpdatePR]) -
             for line in notes:
                 print(f"  {line}")
         elif action == "view":
-            open_url(updates[0].url)
+            open_url(prs[0].url)
         elif action == "list":
-            urls = sorted(u.url for u in updates)
+            urls = sorted(u.url for u in prs)
             for url in urls:
                 print(f"  {url}")
 
@@ -414,20 +501,21 @@ def main() -> int:
     if args.type:
         updates = [u for u in updates if u.package_type == args.type]
 
-    updates_by_dependency: dict[str, list[DependencyUpdatePR]] = {}
+    updates_by_group_name: dict[str, list[DependencyUpdatePR]] = {}
     for update in updates:
-        if update.dependency not in updates_by_dependency:
-            updates_by_dependency[update.dependency] = []
-        updates_by_dependency[update.dependency].append(update)
+        if update.group_name not in updates_by_group_name:
+            updates_by_group_name[update.group_name] = []
+        updates_by_group_name[update.group_name].append(update)
 
-    deps = sorted(updates_by_dependency.keys())
-    print(f"Found {len(updates)} PRs for {len(deps)} dependencies\n")
+    groups = sorted(updates_by_group_name.keys())
+    print(f"Found {len(updates)} PRs for {len(groups)} dependencies\n")
 
     to_review = len(updates)
-    for dep in deps:
-        updates = updates_by_dependency[dep]
+    for group in groups:
+        updates = updates_by_group_name[group]
+        group_type = "group" if updates[0].is_group else "dependency"
 
-        print(f"{len(updates)} updates for {t.bold}{dep}{t.normal}:")
+        print(f"{len(updates)} updates for {group_type} {t.bold}{group}{t.normal}:")
 
         try:
             review_updates(gh_client, updates)
