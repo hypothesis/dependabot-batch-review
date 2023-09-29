@@ -29,9 +29,12 @@ with permission to read and merge PRs in the organization you want to query.
 Then in this repository run:
 
 ```sh
-export GITHUB_TOKEN=$TOKEN
 pipenv run review [organization]
 ```
+
+You will be prompted for a [GitHub API
+token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens).
+If the `GITHUB_TOKEN` environment variable is set, that value will be used.
 
 This will query for open PRs from Dependabot in the organization `organization`,
 which can also be a GitHub username. It will group the updates by package name,

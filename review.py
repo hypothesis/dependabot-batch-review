@@ -1,6 +1,7 @@
 from argparse import ArgumentParser
 from dataclasses import dataclass
 from enum import Enum
+from getpass import getpass
 import json
 import re
 import os
@@ -512,7 +513,10 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    access_token = os.environ["GITHUB_TOKEN"]
+    access_token = os.environ.get("GITHUB_TOKEN")
+    if not access_token:
+        access_token = getpass("GitHub API token: ")
+
     gh_client = GitHubClient(token=access_token)
     t = Terminal()
 
