@@ -8,12 +8,12 @@ requests = "*"
 blessings = "*"
 beautifulsoup4 = "*"
 types-beautifulsoup4 = "*"
+ruff = "*"
 
 [dev-packages]
 black = "*"
 mypy = "*"
 types-requests = "*"
-flake8 = "*"
 
 [requires]
 python_version = "3.9"
@@ -21,7 +21,7 @@ python_version = "3.9"
 [scripts]
 qa = "sh -c 'pipenv run checkformat && pipenv run typecheck && pipenv run lint'"
 checkformat = "black --check ."
-lint = "flake8 --ignore E501"
+lint = "ruff check . --ignore E501"
 format = "black ."
 typecheck = "mypy --strict ."
 review = "python review.py"
