@@ -34,7 +34,10 @@ class GitHubClient:
     @classmethod
     def init(cls):
         """
-        Initialize a GitHubClient.
+        Initialize an authenticated GitHubClient.
+
+        This will read from the `GITHUB_TOKEN` env var if set, or prompt for
+        a token otherwise.
         """
         access_token = os.environ.get("GITHUB_TOKEN")
         if not access_token:
