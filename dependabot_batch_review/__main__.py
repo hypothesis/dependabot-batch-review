@@ -1,5 +1,3 @@
-from getpass import getpass
-import os
 import sys
 
 from argparse import ArgumentParser
@@ -34,11 +32,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    access_token = os.environ.get("GITHUB_TOKEN")
-    if not access_token:
-        access_token = getpass("GitHub API token: ")
-
-    gh_client = GitHubClient(token=access_token)
+    gh_client = GitHubClient.init()
     t = Terminal()
 
     print(f"Finding Dependabot PRs in {t.bold}{args.organization}{t.normal}'s repos…")
