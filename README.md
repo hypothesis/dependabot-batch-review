@@ -1,13 +1,16 @@
 # depandabot-batch-review
 
 CLI tool for batch review of
-[Dependabot](https://docs.github.com/en/code-security/dependabot) PRs across all
-of a user or organization's repositories.
+[Dependabot](https://docs.github.com/en/code-security/dependabot) PRs and
+security alerts across all of a user or organization's repositories.
 
 ## Introduction
 
-This tool enables efficient review and merging of Dependabot PRs across the
-repositories in an organization (or user account).
+This tool enables efficient review of Dependabot activity across an organization
+or user account. This includes:
+
+- Reviewing and merging PRs to update dependencies
+- Reviewing security alerts
 
 It is built on the GitHub [GraphQL API](https://docs.github.com/en/graphql).
 
@@ -21,20 +24,56 @@ It is built on the GitHub [GraphQL API](https://docs.github.com/en/graphql).
    pipenv install --dev
    ```
 
-## Usage
+## Authorization
 
-First generate a [GitHub access
-token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/creating-a-personal-access-token)
-with permission to read and merge PRs in the organization you want to query.
-Then in this repository run:
+Before using this tool, generate a [GitHub access
+token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/creating-a-personal-access-token).
+
+For reviewing security alerts, this token must have permission to query alerts
+in the target organization/user account. For reviewing updates, this token must
+have permission to read and merge PRs in the target organization/user account.
+
+The token can be passed to the tool by setting the `GITHUB_TOKEN` environment
+variable, or by inputting the token when prompted.
+
+## Reviewing security alerts
+
+To review open security alerts for a user or organization, run:
+
+```sh
+pipenv run alerts [organization]
+```
+
+This will search for all open Dependabot alerts against repositories in the
+organization and list their details.
+
+If the same alert is reported multiple times against a single repository,
+only one instance will be shown.
+
+### Resolving alerts
+
+To resolve an alert, you can:
+
+1. Merge a Dependabot PR that has been created. This can be done either through
+   the GitHub UI or using this tool.
+2. Manually create a PR to update affected dependencies.
+3. Dismiss an alert if the risk to a project is low or the alert is not
+   relevant.
+4. Archive the GitHub project if it is no longer being maintained. This will
+   disable all vulnerability reports.
+5. Set up custom Dependabot alert rules on a per repository basis. This can
+   be used to fine tune which alerts are reported based on the lockfile path
+   and other criteria.
+
+   See https://docs.github.com/en/code-security/dependabot/dependabot-alert-rules/about-dependabot-alert-rules
+
+## Reviewing updates
+
+To review Dependabot dependency update PRs for a user or organization, run:
 
 ```sh
 pipenv run review [organization]
 ```
-
-You will be prompted for a [GitHub API
-token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens).
-If the `GITHUB_TOKEN` environment variable is set, that value will be used.
 
 This will query for open PRs from Dependabot in the organization `organization`,
 which can also be a GitHub username. It will group the updates by package name,
@@ -52,7 +91,7 @@ Finding open Dependabot PRs for user or organization hypothesis…
 Found 11 PRs for 7 dependencies
 
 1 updates for dependency @babel/core:
-Versions: 
+Versions:
   @babel/core 7.17.9 -> 7.17.10
 Check status: 1 passed, 0 failed
 [m]erge all passing, [s]kip, [q]uit, [r]eview notes, [l]ist PR urls:
@@ -93,7 +132,7 @@ There are several options to filter PRs:
   `dependabot/{package_type}/{package_name}-{version}`. For example "pip" or
   "npm_and_yarn".
 
-## Limitations
+### Limitations
 
 This tool currently only fetches up to 100 PRs per run. To continue reviewing
 after processing these, simply run the tool again.
