@@ -1,5 +1,6 @@
 from argparse import ArgumentParser
 from dataclasses import dataclass
+from typing import Optional
 import sys
 
 from .github_client import GitHubClient
@@ -31,6 +32,9 @@ class Vulnerability:
     url: str
     """Link to the vulernability report on GitHub."""
 
+    pr: Optional[str]
+    """Link to the Dependabot update PR that resolves this vulnerability."""
+
     title: str
     """Summary of what the vulnerability is."""
 
@@ -60,6 +64,11 @@ query($organization: String!, $cursor: String) {
           nodes {
             number
             createdAt
+            dependabotUpdate {
+              pullRequest {
+                url
+              }
+            }
             securityAdvisory {
               summary
             }
@@ -108,16 +117,23 @@ query($organization: String!, $cursor: String) {
                         continue
                     vulnerable_packages.add(package_name)
 
+                    pr = None
+
+                    dep_update = alert["dependabotUpdate"]
+                    if dep_update and dep_update["pullRequest"]:
+                        pr = dep_update["pullRequest"]["url"]
+
                     vuln = Vulnerability(
                         repo=repo_name,
                         created_at=alert["createdAt"],
-                        package_name=sv["package"]["name"],
                         ecosystem=sv["package"]["ecosystem"],
-                        severity=sv["severity"],
-                        version_range=sv["vulnerableVersionRange"],
                         number=number,
+                        package_name=sv["package"]["name"],
+                        pr=pr,
+                        severity=sv["severity"],
                         title=sa["summary"],
                         url=f"https://github.com/{organization}/{repo_name}/security/dependabot/{number}",
+                        version_range=sv["vulnerableVersionRange"],
                     )
                     vulns.append(vuln)
 
@@ -139,6 +155,10 @@ def main() -> int:
         print(f"{args.organization}/{vuln.repo}: {vuln.package_name} {vuln.severity}")
         print(f"  {vuln.title}")
         print(f"  {vuln.url}")
+
+        if vuln.pr:
+            print(f"  Resolved by: {vuln.pr}")
+
         print()
 
     return 0
