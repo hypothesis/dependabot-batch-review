@@ -79,39 +79,47 @@ query($organization: String!, $cursor: String) {
 }
 """
 
-    result = gh.query(query=query, variables={"organization": organization})
-
     vulns = []
+    cursor = None
+    has_next_page = True
 
-    for repo in result["organization"]["repositories"]["nodes"]:
-        alerts = repo["vulnerabilityAlerts"]["nodes"]
+    while has_next_page:
+        result = gh.query(
+            query=query, variables={"organization": organization, "cursor": cursor}
+        )
+        page_info = result["organization"]["repositories"]["pageInfo"]
+        cursor = page_info["endCursor"]
+        has_next_page = page_info["hasNextPage"]
 
-        if alerts:
-            repo_name = repo["name"]
-            vulnerable_packages = set()
+        for repo in result["organization"]["repositories"]["nodes"]:
+            alerts = repo["vulnerabilityAlerts"]["nodes"]
 
-            for alert in alerts:
-                sa = alert["securityAdvisory"]
-                sv = alert["securityVulnerability"]
-                number = alert["number"]
-                package_name = sv["package"]["name"]
+            if alerts:
+                repo_name = repo["name"]
+                vulnerable_packages = set()
 
-                if package_name in vulnerable_packages:
-                    continue
-                vulnerable_packages.add(package_name)
+                for alert in alerts:
+                    sa = alert["securityAdvisory"]
+                    sv = alert["securityVulnerability"]
+                    number = alert["number"]
+                    package_name = sv["package"]["name"]
 
-                vuln = Vulnerability(
-                    repo=repo_name,
-                    created_at=alert["createdAt"],
-                    package_name=sv["package"]["name"],
-                    ecosystem=sv["package"]["ecosystem"],
-                    severity=sv["severity"],
-                    version_range=sv["vulnerableVersionRange"],
-                    number=number,
-                    title=sa["summary"],
-                    url=f"https://github.com/{organization}/{repo_name}/security/dependabot/{number}",
-                )
-                vulns.append(vuln)
+                    if package_name in vulnerable_packages:
+                        continue
+                    vulnerable_packages.add(package_name)
+
+                    vuln = Vulnerability(
+                        repo=repo_name,
+                        created_at=alert["createdAt"],
+                        package_name=sv["package"]["name"],
+                        ecosystem=sv["package"]["ecosystem"],
+                        severity=sv["severity"],
+                        version_range=sv["vulnerableVersionRange"],
+                        number=number,
+                        title=sa["summary"],
+                        url=f"https://github.com/{organization}/{repo_name}/security/dependabot/{number}",
+                    )
+                    vulns.append(vuln)
 
     return vulns
 
