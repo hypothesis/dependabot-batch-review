@@ -1,5 +1,7 @@
+from getpass import getpass
 import json
 from typing import Any
+import os
 
 import requests
 
@@ -28,3 +30,16 @@ class GitHubClient:
             errors = body["errors"]
             raise Exception(f"Query failed: {json.dumps(errors)}")
         return body["data"]
+
+    @classmethod
+    def init(cls):
+        """
+        Initialize an authenticated GitHubClient.
+
+        This will read from the `GITHUB_TOKEN` env var if set, or prompt for
+        a token otherwise.
+        """
+        access_token = os.environ.get("GITHUB_TOKEN")
+        if not access_token:
+            access_token = getpass("GitHub API token: ")
+        return GitHubClient(access_token)
