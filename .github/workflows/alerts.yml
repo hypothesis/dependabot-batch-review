@@ -1,7 +1,7 @@
 name: Scheduled check for alerts in Hypothesis org
 on:
   schedule:
-    cron: '30 10 * * 1'
+    - cron: '30 10 * * 1'
   workflow_dispatch:
 jobs:
   ci:
