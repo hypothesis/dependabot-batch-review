@@ -67,6 +67,14 @@ To resolve an alert, you can:
 
    See https://docs.github.com/en/code-security/dependabot/dependabot-alert-rules/about-dependabot-alert-rules
 
+### Slack notifications
+
+If run with the `--slack` flag, the tool will send a report of vulnerabilities
+found to the Slack channel specified using the `SLACK_CHANNEL` environment
+variable. An authentication token for a Slack app must be provided via the
+`SLACK_TOKEN` environment variable. You can create a Slack app at
+https://api.slack.com/apps.
+
 ## Reviewing updates
 
 To review Dependabot dependency update PRs for a user or organization, run:

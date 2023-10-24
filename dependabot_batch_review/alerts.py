@@ -1,9 +1,11 @@
 from argparse import ArgumentParser
 from dataclasses import dataclass
+import os
 from typing import Optional
 import sys
 
 from .github_client import GitHubClient
+from .slack import SlackClient
 
 
 @dataclass
@@ -140,11 +142,39 @@ query($organization: String!, $cursor: String) {
     return vulns
 
 
+def format_slack_message(organization: str, vulns: list[Vulnerability]) -> str:
+    """
+    Format a Slack status report from a list of vulnerabilities.
+
+    Returns a message using Slack's "mrkdwn" format. See
+    https://api.slack.com/reference/surfaces/formatting.
+    """
+    if not vulns:
+        return "Found no open vulnerabilities."
+
+    n_repos = len(set(vuln.repo for vuln in vulns))
+
+    msg_parts = []
+    msg_parts.append(f"*Found {len(vulns)} vulnerabilities in {n_repos} repositories.*")
+
+    for vuln in vulns:
+        vuln_msg = []
+        vuln_msg.append(
+            f"{organization}/{vuln.repo}: <{vuln.url}|{vuln.package_name} {vuln.severity} - {vuln.title}>"
+        )
+        if vuln.pr:
+            vuln_msg.append(f"  Resolved by {vuln.pr}")
+        msg_parts.append("\n".join(vuln_msg))
+
+    return "\n\n".join(msg_parts)
+
+
 def main() -> int:
     parser = ArgumentParser()
     parser.add_argument(
         "organization", help="GitHub user or organization to search for Dependabot PRs"
     )
+    parser.add_argument("--slack", help="Post report to Slack", action="store_true")
     args = parser.parse_args()
 
     gh_client = GitHubClient.init()
@@ -160,6 +190,13 @@ def main() -> int:
             print(f"  Resolved by: {vuln.pr}")
 
         print()
+
+    if args.slack:
+        token = os.environ["SLACK_TOKEN"]
+        channel = os.environ["SLACK_CHANNEL"]
+        slack_client = SlackClient(token)
+        slack_message = format_slack_message(args.organization, vulns)
+        slack_client.post_message(channel, slack_message)
 
     return 0
 
