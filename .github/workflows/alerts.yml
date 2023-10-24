@@ -20,9 +20,21 @@ jobs:
           pip install --upgrade pipenv
           pipenv install --deploy
 
+      - name: Install pipx
+        run: python -m pip install pipx
+
+      - name: Install gha-token
+        run: python -m pipx install "git+https://github.com/hypothesis/gha-token.git"
+
+      - name: Get GitHub token
+        id: github_token
+        run: echo GITHUB_TOKEN=$(gha-token --app-id 274948 --installation-id 32440510 --private-key "$PRIVATE_KEY") >> $GITHUB_OUTPUT
+        env:
+          PRIVATE_KEY: ${{ secrets.HYPOTHESIS_GITHUB_APP_PRIVATE_KEY }}
+
       - name: Check for alerts
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.github_token.outputs.GITHUB_TOKEN }}
           SLACK_TOKEN: ${{ secrets.SLACK_DEPENDABOT_ALERT_TOKEN }}
           SLACK_CHANNEL: C062HG8E691
         run: |
