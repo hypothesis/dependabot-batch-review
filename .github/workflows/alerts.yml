@@ -4,7 +4,7 @@ on:
     - cron: '30 10 * * 1'
   workflow_dispatch:
 jobs:
-  ci:
+  check-alerts:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
