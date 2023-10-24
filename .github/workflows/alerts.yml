@@ -35,7 +35,7 @@ jobs:
       - name: Check for alerts
         env:
           GITHUB_TOKEN: ${{ steps.github_token.outputs.GITHUB_TOKEN }}
+          SLACK_CHANNEL: ${{ vars.SLACK_CHANNEL }}
           SLACK_TOKEN: ${{ secrets.SLACK_DEPENDABOT_ALERT_TOKEN }}
-          SLACK_CHANNEL: C062HG8E691
         run: |
           pipenv run alerts hypothesis --slack
