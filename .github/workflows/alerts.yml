@@ -1,0 +1,29 @@
+name: Scheduled check for alerts in Hypothesis org
+on:
+  schedule:
+    cron: '30 10 * * 1'
+  workflow_dispatch:
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Setup python
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.9
+
+      - name: Install pipenv
+        run: |
+          pip install --upgrade pipenv
+          pipenv install --deploy
+
+      - name: Check for alerts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SLACK_TOKEN: ${{ secrets.SLACK_DEPENDABOT_ALERT_TOKEN }}
+          SLACK_CHANNEL: C062HG8E691
+        run: |
+          pipenv run alerts hypothesis --slack
