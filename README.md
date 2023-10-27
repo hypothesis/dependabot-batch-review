@@ -4,6 +4,8 @@ CLI tool for batch review of
 [Dependabot](https://docs.github.com/en/code-security/dependabot) PRs and
 security alerts across all of a user or organization's repositories.
 
+Note: The alert-reviewing functionality is being migrated to a separate [hypothesis/dependabot-alerts](https://github.com/hypothesis/dependabot-alerts) tool.
+
 ## Introduction
 
 This tool enables efficient review of Dependabot activity across an organization
