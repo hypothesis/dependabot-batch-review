@@ -2,6 +2,7 @@ from getpass import getpass
 import json
 from typing import Any
 import os
+from subprocess import CalledProcessError, run
 
 import requests
 
@@ -36,10 +37,20 @@ class GitHubClient:
         """
         Initialize an authenticated GitHubClient.
 
-        This will read from the `GITHUB_TOKEN` env var if set, or prompt for
-        a token otherwise.
+        This will read from the `GITHUB_TOKEN` env var if set, query the `gh`
+        command if installed, or prompt otherwise.
         """
         access_token = os.environ.get("GITHUB_TOKEN")
+
+        if not access_token:
+            try:
+                access_token = run(
+                    ["gh", "auth", "token"], check=True, capture_output=True, text=True
+                ).stdout.strip()
+            except CalledProcessError:
+                pass
+
         if not access_token:
             access_token = getpass("GitHub API token: ")
+
         return GitHubClient(access_token)
