@@ -26,15 +26,15 @@ It is built on the GitHub [GraphQL API](https://docs.github.com/en/graphql).
 
 ## Authorization
 
-Before using this tool, generate a [GitHub access
-token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/creating-a-personal-access-token).
+In order of precedence, this tool will obtain a GitHub API token from:
 
-For reviewing security alerts, this token must have permission to query alerts
+ - The `GITHUB_TOKEN` environment variable
+ - The [GitHub CLI](https://cli.github.com) if installed and logged in
+ - Prompting for a token when the tool is run
+
+For reviewing security alerts, the token must have permission to query alerts
 in the target organization/user account. For reviewing updates, this token must
 have permission to read and merge PRs in the target organization/user account.
-
-The token can be passed to the tool by setting the `GITHUB_TOKEN` environment
-variable, or by inputting the token when prompted.
 
 ## Reviewing security alerts
 
