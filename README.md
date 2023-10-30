@@ -40,7 +40,7 @@ have permission to read and merge PRs in the target organization/user account.
 
 ## Reviewing security alerts
 
-To review open security alerts for a user or organization, run:
+To review open security alerts for an organization, run:
 
 ```sh
 pipenv run alerts [organization]
@@ -51,6 +51,12 @@ organization and list their details.
 
 If the same alert is reported multiple times against a single repository,
 only one instance will be shown.
+
+To review open security alerts for repositories belonging to a user, run:
+
+```sh
+pipenv run alerts --user [user]
+```
 
 ### Resolving alerts
 
