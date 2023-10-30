@@ -41,9 +41,13 @@ class Vulnerability:
     """Summary of what the vulnerability is."""
 
 
-def fetch_alerts(gh: GitHubClient, organization: str) -> list[Vulnerability]:
+def fetch_alerts(
+    gh: GitHubClient, organization: Optional[str] = None, user: Optional[str] = None
+) -> list[Vulnerability]:
     """
-    Fetch details of all open vulnerability alerts in `organization`.
+    Fetch details of all open vulnerability alerts for an organization or user.
+
+    One of `organization` or `user` must be supplied.
 
     To reduce the volume of noise, especially for repositories which include the
     same dependency in multiple lockfiles, only one vulnerability is reported
@@ -52,9 +56,16 @@ def fetch_alerts(gh: GitHubClient, organization: str) -> list[Vulnerability]:
     Vulnerabilities are not reported from archived repositories.
     """
 
+    if organization:
+        org_type = "organization"
+    elif user:
+        org_type = "user"
+    else:
+        raise ValueError("Either `organization` or `user` must be set")
+
     query = """
 query($organization: String!, $cursor: String) {
-  organization(login: $organization) {
+  __ORG_TYPE__(login: $organization) {
     repositories(first: 100, after: $cursor) {
       pageInfo {
         endCursor
@@ -88,7 +99,9 @@ query($organization: String!, $cursor: String) {
     }
   }
 }
-"""
+""".replace(
+        "__ORG_TYPE__", org_type
+    )
 
     vulns = []
     cursor = None
@@ -96,13 +109,14 @@ query($organization: String!, $cursor: String) {
 
     while has_next_page:
         result = gh.query(
-            query=query, variables={"organization": organization, "cursor": cursor}
+            query=query,
+            variables={"organization": organization or user, "cursor": cursor},
         )
-        page_info = result["organization"]["repositories"]["pageInfo"]
+        page_info = result[org_type]["repositories"]["pageInfo"]
         cursor = page_info["endCursor"]
         has_next_page = page_info["hasNextPage"]
 
-        for repo in result["organization"]["repositories"]["nodes"]:
+        for repo in result[org_type]["repositories"]["nodes"]:
             alerts = repo["vulnerabilityAlerts"]["nodes"]
 
             if alerts:
@@ -175,10 +189,19 @@ def main() -> int:
         "organization", help="GitHub user or organization to search for Dependabot PRs"
     )
     parser.add_argument("--slack", help="Post report to Slack", action="store_true")
+    parser.add_argument(
+        "--user",
+        help="Treat the `organization` arg as a GitHub user rather than org",
+        action="store_true",
+    )
     args = parser.parse_args()
 
     gh_client = GitHubClient.init()
-    vulns = fetch_alerts(gh_client, args.organization)
+
+    if args.user:
+        vulns = fetch_alerts(gh_client, user=args.organization)
+    else:
+        vulns = fetch_alerts(gh_client, organization=args.organization)
 
     print(f"Found {len(vulns)} vulnerabilities.")
     for vuln in vulns:
