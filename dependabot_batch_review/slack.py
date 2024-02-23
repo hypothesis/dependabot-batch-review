@@ -1,3 +1,5 @@
+from typing import Any
+
 import requests
 
 
@@ -9,7 +11,7 @@ class SlackClient:
     def __init__(self, token: str):
         self.token = token
 
-    def post_message(self, channel_id: str, message: str):
+    def post_message(self, channel_id: str, message: str) -> None:
         """
         Post a message to a Slack channel.
 
@@ -25,7 +27,7 @@ class SlackClient:
         }
         self._call(body)
 
-    def _call(self, body):
+    def _call(self, body: Any) -> Any:
         rsp = requests.post(
             "https://slack.com/api/chat.postMessage",
             json=body,
