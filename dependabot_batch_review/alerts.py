@@ -99,9 +99,7 @@ query($organization: String!, $cursor: String) {
     }
   }
 }
-""".replace(
-        "__ORG_TYPE__", org_type
-    )
+""".replace("__ORG_TYPE__", org_type)
 
     vulns = []
     cursor = None

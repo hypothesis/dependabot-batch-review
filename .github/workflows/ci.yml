@@ -10,16 +10,19 @@ jobs:
       - name: Setup python
         uses: actions/setup-python@v2
         with:
-          python-version: 3.9
+          python-version: 3.11
 
-      - name: Install pipenv
+      - name: Install Poetry
         run: |
-          pip install --upgrade pipenv
-          pipenv install --dev --deploy
+          pip install --upgrade poetry
+
+      - name: Install dependencies
+        run: |
+          poetry install
 
       - name: QA
         run: |
-          pipenv run qa
+          make qa
 
       - name: Dry run
         env:
@@ -27,4 +30,4 @@ jobs:
         run: |
           # Do a dry-run of the tool. This will query for PRs but simulate
           # the user entering "skip" for each one.
-          pipenv run review hypothesis
+          ./review.sh hypothesis

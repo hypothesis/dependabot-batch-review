@@ -18,12 +18,12 @@ It is built on the GitHub [GraphQL API](https://docs.github.com/en/graphql).
 
 ## Installation
 
-1. Install [Pipenv](https://pipenv.pypa.io/en/latest/)
+1. Install [Poetry](https://python-poetry.org)
 
 2. Clone this repository and install Python dependencies with:
 
    ```
-   pipenv install --dev
+   poetry install
    ```
 
 ## Authorization
@@ -43,7 +43,7 @@ have permission to read and merge PRs in the target organization/user account.
 To review open security alerts for an organization, run:
 
 ```sh
-pipenv run alerts [organization]
+./alerts.sh [organization]
 ```
 
 This will search for all open Dependabot alerts against repositories in the
@@ -55,7 +55,7 @@ only one instance will be shown.
 To review open security alerts for repositories belonging to a user, run:
 
 ```sh
-pipenv run alerts --user [user]
+./alerts.sh --user [user]
 ```
 
 ### Resolving alerts
@@ -88,7 +88,7 @@ https://api.slack.com/apps.
 To review Dependabot dependency update PRs for a user or organization, run:
 
 ```sh
-pipenv run review [organization]
+./review.sh [organization]
 ```
 
 This will query for open PRs from Dependabot in the organization `organization`,
@@ -102,7 +102,7 @@ release notes for the update, merge all PRs in the group that have passed CI
 checks, or see individual PRs in the group.
 
 ```shellsession
-$ pipenv run review hypothesis
+$ ./review.sh hypothesis
 Finding open Dependabot PRs for user or organization hypothesis…
 Found 11 PRs for 7 dependencies
 

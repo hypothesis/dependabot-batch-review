@@ -1,8 +1,8 @@
 from getpass import getpass
 import json
-from typing import Any
 import os
 from subprocess import CalledProcessError, run
+from typing import Any, Self
 
 import requests
 
@@ -33,7 +33,7 @@ class GitHubClient:
         return body["data"]
 
     @classmethod
-    def init(cls):
+    def init(cls) -> Self:
         """
         Initialize an authenticated GitHubClient.
 
@@ -53,4 +53,4 @@ class GitHubClient:
         if not access_token:
             access_token = getpass("GitHub API token: ")
 
-        return GitHubClient(access_token)
+        return cls(access_token)
