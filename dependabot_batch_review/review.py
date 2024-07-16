@@ -390,6 +390,21 @@ def open_url(url: str) -> None:
     subprocess.call(["open", url])
 
 
+def get_package_diff_url(package_type: str, update: DependencyUpdate) -> str | None:
+    """
+    Get the URL of a web page showing the changes in the contents of a package.
+    """
+    if not update.from_version or not update.to_version:
+        return None
+
+    match package_type:
+        case "npm_and_yarn":
+            return f"https://diff.intrinsic.com/{update.name}/{update.from_version}/{update.to_version}"
+        case _:
+            # TODO - Find the best available equivalents for PyPI etc.
+            return None
+
+
 def review_updates(gh_client: GitHubClient, prs: list[DependencyUpdatePR]) -> None:
     """
     Perform an interactive review/merge of a batch of updates for a dependency.
@@ -424,8 +439,8 @@ def review_updates(gh_client: GitHubClient, prs: list[DependencyUpdatePR]) -> No
 
     while True:
         action = read_action(
-            prompt="[m]erge all passing, [s]kip, [q]uit, [r]eview changes, [v]iew in browser, [l]ist URLs",
-            actions=["merge", "skip", "quit", "review", "list", "view"],
+            prompt="[m]erge passing, [s]kip, [q]uit, [r]eview changes, package [d]iff, [v]iew in browser, [l]ist URLs",
+            actions=["diff", "merge", "skip", "quit", "review", "list", "view"],
             default="skip",
         )
         if action == "quit":
@@ -462,3 +477,26 @@ def review_updates(gh_client: GitHubClient, prs: list[DependencyUpdatePR]) -> No
             urls = sorted(u.url for u in prs)
             for url in urls:
                 print(f"  {url}")
+        elif action == "diff":
+            diff_urls = set()
+            for pr in prs:
+                for pr_update in pr.updates:
+                    if diff_url := get_package_diff_url(pr.package_type, pr_update):
+                        diff_urls.add(diff_url)
+
+            match len(diff_urls):
+                case 0:
+                    print(
+                        """Package diffs are not available for these packages.
+
+Package diffs are currently only available for npm packages."""
+                    )
+                case 1:
+                    # There is one (package, from_version, to_version) diff.
+                    # Open it directly
+                    open_url(next(iter(diff_urls)))
+                case _:
+                    # There is more than one (package, from_version, to_version)
+                    # combination, so list all the URLs.
+                    for url in diff_urls:
+                        print(url)
