@@ -141,12 +141,15 @@ def parse_dependabot_pr(title: str, body: str) -> DependencyUpdateDetails:
             ],
         )
 
-    # PRs that update a group have a title of the form "Bump the foo group with
-    # 2 updates".
+    # PRs that update a named dependency group have a title of the form "Bump
+    # the foo group with 2 updates". Dependabot may also update multiple
+    # dependencies in a PR which are not part of a named group, if those
+    # dependencies need to be updated together. Those PRs have titles like "Bump
+    # foo and bar".
     #
-    # For each update there is a paragraph in the body with the text "Updates
-    # bar from 1.0.0 to 2.0.0" followed by `<details>` sections for release
-    # notes, changelog and commits.
+    # For each update there is a paragraph in the body containing the text
+    # "Updates bar from 1.0.0 to 2.0.0" followed by `<details>` sections for
+    # release notes, changelog and commits.
     #
     # As an exception, if there is only one update, the "Updates bar ..."
     # paragraph is omitted and instead there is a paragraph with the text
@@ -154,15 +157,19 @@ def parse_dependabot_pr(title: str, body: str) -> DependencyUpdateDetails:
     group_title_re = r"Bump the (\S+) group"
     group_title_match = re.search(group_title_re, title, re.IGNORECASE)
     if not group_title_match:
+        # Fallback for titles like "Bump foo and bar".
+        group_title_match = re.search(r"Bump (.*)", title, re.IGNORECASE)
+
+    if not group_title_match:
         raise ValueError("PR title does not match known patterns")
     (group_title,) = group_title_match.groups()
 
     update_heading_pat = r"Updates (\S+) from (\S+) to (\S+)"
 
-    def is_update_heading(el: PageElement) -> bool:
-        return re.match(update_heading_pat, el.get_text()) is not None
+    def contains_update_heading(el: PageElement) -> bool:
+        return re.search(update_heading_pat, el.get_text()) is not None
 
-    headings = [p for p in soup.find_all("p") if is_update_heading(p)]
+    headings = [p for p in soup.find_all("p") if contains_update_heading(p)]
 
     # Handle case of a single update where the "Updates ..." headings are
     # missing.
@@ -195,7 +202,7 @@ def parse_dependabot_pr(title: str, body: str) -> DependencyUpdateDetails:
         # update-specific notes from the general Dependabot commands and
         # options.
         curr = heading.next_sibling
-        while curr and not is_update_heading(curr) and curr.name != "hr":
+        while curr and not contains_update_heading(curr) and curr.name != "hr":
             if curr.name == "details":
                 notes.append(curr.get_text())
             curr = curr.next_sibling
