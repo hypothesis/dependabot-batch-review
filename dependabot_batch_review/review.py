@@ -397,16 +397,36 @@ def open_url(url: str) -> None:
     subprocess.call(["open", url])
 
 
-def get_package_diff_url(package_type: str, update: DependencyUpdate) -> str | None:
+def get_package_diff(package_type: str, update: DependencyUpdate) -> str | None:
     """
-    Get the URL of a web page showing the changes in the contents of a package.
+    Get the diff showing the changes in the contents of a package.
     """
     if not update.from_version or not update.to_version:
         return None
 
     match package_type:
         case "npm_and_yarn":
-            return f"https://diff.intrinsic.com/{update.name}/{update.from_version}/{update.to_version}"
+            try:
+                cmd = [
+                    "npm",
+                    "diff",
+                    "--diff",
+                    f"{update.name}@{update.from_version}",
+                    "--diff",
+                    f"{update.name}@{update.to_version}",
+                ]
+                print(f"Running command: {' '.join(cmd)}")
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                if result.returncode == 0:
+                    return result.stdout
+                else:
+                    return f"Error running npm diff: {result.stderr}"
+            except subprocess.TimeoutExpired:
+                return "Error: npm diff command timed out"
+            except FileNotFoundError:
+                return "Error: npm command not found. Please ensure npm is installed and in your PATH."
+            except Exception as e:
+                return f"Error running npm diff: {str(e)}"
         case _:
             # TODO - Find the best available equivalents for PyPI etc.
             return None
@@ -485,25 +505,33 @@ def review_updates(gh_client: GitHubClient, prs: list[DependencyUpdatePR]) -> No
             for url in urls:
                 print(f"  {url}")
         elif action == "diff":
-            diff_urls = set()
+            # Collect unique (name, from_version, to_version) combinations
+            unique_updates: dict[
+                tuple[str, str | None, str | None], tuple[str, DependencyUpdate]
+            ] = {}
             for pr in prs:
                 for pr_update in pr.updates:
-                    if diff_url := get_package_diff_url(pr.package_type, pr_update):
-                        diff_urls.add(diff_url)
+                    key = (pr_update.name, pr_update.from_version, pr_update.to_version)
+                    if key not in unique_updates:
+                        unique_updates[key] = (pr.package_type, pr_update)
 
-            match len(diff_urls):
-                case 0:
-                    print(
-                        """Package diffs are not available for these packages.
+            diffs = []
+            for (name, from_version, to_version), (
+                package_type,
+                dep_update,
+            ) in unique_updates.items():
+                if diff_output := get_package_diff(package_type, dep_update):
+                    diffs.append((name, from_version, to_version, diff_output))
+
+            if not diffs:
+                print(
+                    """Package diffs are not available for these packages.
 
 Package diffs are currently only available for npm packages."""
-                    )
-                case 1:
-                    # There is one (package, from_version, to_version) diff.
-                    # Open it directly
-                    open_url(next(iter(diff_urls)))
-                case _:
-                    # There is more than one (package, from_version, to_version)
-                    # combination, so list all the URLs.
-                    for url in diff_urls:
-                        print(url)
+                )
+            else:
+                for package_name, from_version, to_version, diff_output in diffs:
+                    from_ver = from_version or "(unknown)"
+                    to_ver = to_version or "(unknown)"
+                    print(f"\n--- Diff for {package_name} {from_ver} -> {to_ver} ---")
+                    print(diff_output)
