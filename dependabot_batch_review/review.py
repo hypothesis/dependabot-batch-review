@@ -530,8 +530,25 @@ def review_updates(gh_client: GitHubClient, prs: list[DependencyUpdatePR]) -> No
 Package diffs are currently only available for npm packages."""
                 )
             else:
+                # Combine all diffs into a single string for the pager
+                combined_diff = ""
                 for package_name, from_version, to_version, diff_output in diffs:
                     from_ver = from_version or "(unknown)"
                     to_ver = to_version or "(unknown)"
-                    print(f"\n--- Diff for {package_name} {from_ver} -> {to_ver} ---")
-                    print(diff_output)
+                    combined_diff += (
+                        f"\n--- Diff for {package_name} {from_ver} -> {to_ver} ---\n"
+                    )
+                    combined_diff += diff_output + "\n"
+
+                # Use less to display the diff interactively
+                try:
+                    process = subprocess.Popen(
+                        ["less"], stdin=subprocess.PIPE, text=True
+                    )
+                    process.communicate(input=combined_diff)
+                except FileNotFoundError:
+                    print(
+                        "Error: 'less' command not found. Please install less to view diffs."
+                    )
+                except subprocess.CalledProcessError:
+                    print("Error: Failed to display diff with less.")
