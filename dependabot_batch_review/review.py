@@ -1,11 +1,11 @@
 import sys
 from pathlib import Path
-from typing import Optional, TextIO, Union
+from typing import Any, Optional, TextIO, Union
 
 from blessings import Terminal  # type: ignore
 from bs4 import BeautifulSoup, PageElement, Tag
 from openpyxl import load_workbook  # type: ignore[import-untyped]
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 from enum import Enum
 import re
 import os
@@ -110,6 +110,7 @@ class DependencyUpdatePR:
     ghsa_id: Optional[str] = None
     advisory_summary: Optional[str] = None
     advisory_url: Optional[str] = None
+    reviewers: list[str] = dataclass_field(default_factory=list)
 
 
 @dataclass
@@ -327,6 +328,18 @@ def fetch_dependency_prs(
             reviewDecision
             url
 
+            assignees(first: 10) {
+              nodes { login }
+            }
+            reviewRequests(first: 10) {
+              nodes {
+                requestedReviewer {
+                  ... on User { login }
+                  ... on Team { name }
+                }
+              }
+            }
+
             commits (last:1) {
               nodes {
                 commit {
@@ -397,10 +410,33 @@ def fetch_dependency_prs(
                 ghsa_id=ghsa_id,
                 advisory_summary=advisory_summary,
                 advisory_url=advisory_url,
+                reviewers=_extract_reviewers(pr),
             )
         )
 
     return updates
+
+
+def _extract_reviewers(pr: dict[str, Any]) -> list[str]:
+    """Collect unique reviewer / assignee logins from a PR node."""
+    people: list[str] = []
+    for node in pr.get("assignees", {}).get("nodes", []):
+        login: str | None = node.get("login")
+        if login:
+            people.append(login)
+    for node in pr.get("reviewRequests", {}).get("nodes", []):
+        reviewer = node.get("requestedReviewer", {}) or {}
+        name: str | None = reviewer.get("login") or reviewer.get("name")
+        if name:
+            people.append(name)
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    unique: list[str] = []
+    for p in people:
+        if p not in seen:
+            seen.add(p)
+            unique.append(p)
+    return unique
 
 
 def merge_pr(gh: GitHubClient, pr_id: str, merge_method: str = "MERGE") -> None:

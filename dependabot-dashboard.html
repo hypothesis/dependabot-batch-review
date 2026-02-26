@@ -191,6 +191,9 @@
     .notes-cell { cursor: pointer; }
     .notes-cell:hover { color: var(--primary); }
 
+    /* Reviewer badges */
+    .reviewer-badge { display: inline-flex; align-items: center; gap: 2px; padding: 2px 8px; border-radius: 12px; background: rgba(99,102,241,0.15); color: #818cf8; font-size: 12px; font-weight: 500; white-space: nowrap; }
+
     /* Check status icons */
     .check-icon { font-size: 18px !important; vertical-align: middle; }
     .check-passed { color: var(--color-success-foreground); }
@@ -266,8 +269,8 @@
           </div>
           <div class="data-table"><div class="table-container">
             <table>
-              <thead><tr><th style="width:24%">Package</th><th>Severity</th><th>Priority</th><th>Repos</th><th>Check</th><th>PR #</th><th>Merged?</th><th>Notes</th></tr></thead>
-              <tbody id="tableBody"><tr><td colspan="8"><div class="empty-state"><span class="material-icons">upload_file</span><h3>No data loaded</h3><p>Click <strong>Sync</strong> to fetch from GitHub, or upload an XLSX file</p></div></td></tr></tbody>
+              <thead><tr><th style="width:22%">Package</th><th>Severity</th><th>Priority</th><th>Repos</th><th>Reviewer / Assignee</th><th>Check</th><th>PR #</th><th>Merged?</th><th>Notes</th></tr></thead>
+              <tbody id="tableBody"><tr><td colspan="9"><div class="empty-state"><span class="material-icons">upload_file</span><h3>No data loaded</h3><p>Click <strong>Sync</strong> to fetch from GitHub, or upload an XLSX file</p></div></td></tr></tbody>
             </table>
           </div></div>
           <div id="dashPagination" class="pagination" style="display:none"></div>
@@ -298,7 +301,7 @@
           </div>
           <div class="data-table"><div class="table-container">
             <table>
-              <thead><tr><th style="width:28%">Package</th><th>Severity</th><th>Priority</th><th>Repos</th><th>PR</th><th>Advisory</th><th style="width:90px">Patched?</th></tr></thead>
+              <thead><tr><th style="width:26%">Package</th><th>Severity</th><th>Priority</th><th>Repos</th><th>Reviewer / Assignee</th><th>PR</th><th>Advisory</th><th style="width:90px">Patched?</th></tr></thead>
               <tbody id="groupedTableBody"><tr><td colspan="7"><div class="empty-state"><span class="material-icons">warning</span><h3>No alerts loaded</h3><p>Sync data from the Dashboard tab first</p></div></td></tr></tbody>
             </table>
           </div></div>
@@ -490,6 +493,7 @@
         mergedDate: '',
         mergedBy: '',
         notes: r.notes || '',
+        reviewers: r.reviewers || [],
         updates: r.updates || [],
       }));
       onDataLoaded();
@@ -542,7 +546,7 @@
 
     function renderTable() {
       if (!filteredData.length) {
-        tableBody.innerHTML = '<tr><td colspan="8"><div class="empty-state">' +
+        tableBody.innerHTML = '<tr><td colspan="9"><div class="empty-state">' +
           '<span class="material-icons">search_off</span>' +
           '<h3>No matching alerts</h3>' +
           '<p>Try adjusting your filters or syncing data</p></div></td></tr>';
@@ -586,11 +590,13 @@
         const mergedLabel = mergedAll ? 'Yes' : mergedSome ? 'Partial' : 'No';
         const mergedClass = mergedAll ? 'status-passed' : mergedSome ? 'status-pending' : '';
         const notesTrunc = truncate(g.advisorySummary || '', 40);
+        const groupReviewers = collectReviewers(g.repos);
         h += '<tr class="accordion-header" data-dgi="' + gi + '">' +
           '<td><span class="material-icons accordion-chevron">chevron_right</span> <strong>' + esc(g.package) + '</strong>' + prLink + '</td>' +
           '<td><span class="risk-label risk-' + g.severity.toLowerCase() + '">' + esc(g.severity) + '</span></td>' +
           '<td><span class="priority-label priority-' + g.priority.toLowerCase() + '">' + esc(g.priority) + '</span></td>' +
           '<td><span class="repo-count">' + g.repos.length + '</span></td>' +
+          '<td>' + reviewerBadges(groupReviewers) + '</td>' +
           '<td>' + checkStatusHtml(checkAgg) + '</td>' +
           '<td>' + (firstPr ? '<a href="' + esc(firstPr.prUrl) + '" target="_blank" class="link" onclick="event.stopPropagation()">#' + esc(String(firstPr.prNumber)) + '</a>' : '\u2013') + '</td>' +
           '<td class="' + mergedClass + '">' + esc(mergedLabel) + '</td>' +
@@ -602,6 +608,7 @@
             '<td>' + esc(r.repo) + '</td>' +
             '<td colspan="2">' + esc(r.ecosystem) + '</td>' +
             '<td></td>' +
+            '<td>' + reviewerBadges(r.reviewers || []) + '</td>' +
             '<td>' + checkStatusHtml(r.checkStatus) + '</td>' +
             '<td>' + (r.prUrl ? '<a href="' + esc(r.prUrl) + '" target="_blank" class="link">#' + esc(String(r.prNumber)) + '</a>' : '\u2013') + '</td>' +
             '<td class="' + (r.merged === 'Yes' ? 'status-passed' : 'status-pending') + '">' + esc(r.merged) + '</td>' +
@@ -636,6 +643,26 @@
         if ((prio[cs] || 0) > (prio[worst] || 0)) worst = cs;
       }
       return worst;
+    }
+
+    function collectReviewers(repos) {
+      const seen = new Set();
+      const result = [];
+      for (const r of repos) {
+        for (const name of (r.reviewers || [])) {
+          if (!seen.has(name)) { seen.add(name); result.push(name); }
+        }
+      }
+      return result;
+    }
+
+    function reviewerBadges(reviewers) {
+      if (!reviewers || !reviewers.length) return '\u2013';
+      return reviewers.map(r =>
+        '<span class="reviewer-badge" title="' + esc(r) + '">' +
+        '<span class="material-icons" style="font-size:14px;vertical-align:middle;margin-right:2px">person</span>' +
+        esc(r) + '</span>'
+      ).join(' ');
     }
 
     function checkStatusHtml(status) {
@@ -711,7 +738,7 @@
       const groups = getFilteredGroups();
       updateAlertStats();
       if (!groups.length) {
-        groupedTableBody.innerHTML = '<tr><td colspan="7"><div class="empty-state">' +
+        groupedTableBody.innerHTML = '<tr><td colspan="8"><div class="empty-state">' +
           '<span class="material-icons">check_circle</span>' +
           '<h3>No matching vulnerabilities</h3>' +
           '<p>All clear or adjust your filters</p></div></td></tr>';
@@ -730,11 +757,13 @@
         const firstPr = g.repos.find(r => r.prUrl);
         const prLink = firstPr ? '<a href="' + esc(firstPr.prUrl) + '" target="_blank" class="link" onclick="event.stopPropagation()" title="Open PR">' +
           '<span class="material-icons pr-link-icon">open_in_new</span></a>' : '';
+        const groupReviewersAlert = collectReviewers(g.repos);
         h += '<tr class="accordion-header ' + pc + '" data-gi="' + i + '">' +
           '<td><span class="material-icons accordion-chevron">chevron_right</span> <strong>' + esc(g.package) + '</strong>' + prLink + '</td>' +
           '<td><span class="risk-label risk-' + g.severity.toLowerCase() + '">' + esc(g.severity) + '</span></td>' +
           '<td><span class="priority-label priority-' + g.priority.toLowerCase() + '">' + esc(g.priority) + '</span></td>' +
           '<td><span class="repo-count">' + g.repos.length + '</span></td>' +
+          '<td>' + reviewerBadges(groupReviewersAlert) + '</td>' +
           '<td>' + (firstPr && firstPr.prUrl ? '<a href="' + esc(firstPr.prUrl) + '" target="_blank" class="link" onclick="event.stopPropagation()">#' + esc(String(firstPr.prNumber)) + '</a>' : '\u2013') + '</td>' +
           '<td title="' + esc(g.advisorySummary || '') + '">' + (g.advisorySummary ? '<span class="notes-cell" onclick="event.stopPropagation();showNotesModal(\'' + escAttr(g.advisorySummary || '') + '\')">' + truncate(g.advisorySummary || '\u2013', 40) + '</span>' : '\u2013') + '</td>' +
           '<td><label class="patch-toggle" onclick="event.stopPropagation()"><input type="checkbox" ' +
@@ -746,6 +775,7 @@
           h += '<tr class="accordion-child ' + pc + '" data-gchild="' + i + '">' +
             '<td>' + esc(r.repo) + '</td>' +
             '<td colspan="2">' + esc(r.ecosystem) + '</td>' +
+            '<td>' + reviewerBadges(r.reviewers || []) + '</td>' +
             '<td>' + (r.prUrl ? '<a href="' + esc(r.prUrl) + '" target="_blank" class="link">#' + esc(String(r.prNumber)) + '</a>' : '\u2013') + '</td>' +
             '<td>' + (r.prUrl ? '<a href="' + esc(r.prUrl) + '" target="_blank" class="link">Open MR</a>' : '\u2013') + '</td>' +
             '<td>' + (r.notes ? '<span class="notes-cell" onclick="showNotesModal(\'' + escAttr(r.notes) + '\')">' + truncate(r.notes, 50) + '</span>' : '\u2013') + '</td>' +

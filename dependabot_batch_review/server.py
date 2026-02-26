@@ -63,6 +63,7 @@ def _pr_to_alert_dict(pr: DependencyUpdatePR) -> dict[str, Any]:
         "mergeMethod": pr.merge_method,
         "merged": "No",
         "notes": "\n".join(risk.reasons),
+        "reviewers": pr.reviewers,
         "updates": [
             {
                 "name": u.name,
