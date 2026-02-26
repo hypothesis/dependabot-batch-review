@@ -3,7 +3,7 @@ import json
 import os
 from subprocess import CalledProcessError, run
 from typing import Any, Self
-import sys # Added import
+import sys  # Added import
 
 import requests
 
@@ -53,7 +53,9 @@ class GitHubClient:
 
         if not access_token:
             if not os.isatty(sys.stdin.fileno()):
-                raise Exception("No GitHub token found and not running in an interactive terminal. Please set GITHUB_TOKEN or run `gh auth login`.")
+                raise Exception(
+                    "No GitHub token found and not running in an interactive terminal. Please set GITHUB_TOKEN or run `gh auth login`."
+                )
             access_token = getpass("GitHub API token: ")
 
         return cls(access_token)

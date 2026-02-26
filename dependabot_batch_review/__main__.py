@@ -1,7 +1,7 @@
 import sys
 from argparse import ArgumentParser
 from blessings import Terminal  # type: ignore
-from pathlib import Path # Added this import
+from pathlib import Path
 
 from .github_client import GitHubClient
 from .review import (
@@ -39,7 +39,29 @@ def main() -> int:
         "--output-xlsx",
         help="Path to an XLSX file to write the review output to, using the template.",
     )
+    parser.add_argument(
+        "--serve",
+        action="store_true",
+        help="Start the dashboard web server instead of running a review.",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8080,
+        help="Port for the dashboard web server (default: 8080).",
+    )
     args = parser.parse_args()
+
+    # --serve mode: launch the dashboard server and exit
+    if args.serve:
+        from .server import start_server
+
+        start_server(
+            organization=args.organization,
+            port=args.port,
+            repo_filter=args.repo_filter,
+        )
+        return 0
 
     gh_client = GitHubClient.init()
     t = Terminal()
@@ -88,7 +110,9 @@ def main() -> int:
             group_updates = updates_by_group_name[group]
             group_type = "group" if group_updates[0].is_group else "dependency"
 
-            print(f"{len(group_updates)} updates for {group_type} {t.bold}{group}{t.normal}:")
+            print(
+                f"{len(group_updates)} updates for {group_type} {t.bold}{group}{t.normal}:"
+            )
 
             try:
                 review_updates(gh_client, group_updates)

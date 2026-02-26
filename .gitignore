@@ -2,4 +2,3 @@ __pycache__/
 *.xlsx
 *.csv
 .DS_Store
-poetry.lock

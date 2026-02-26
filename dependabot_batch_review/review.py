@@ -11,7 +11,8 @@ import re
 import os
 import subprocess
 
-from .github_client import GitHubClient # THIS IS THE CRUCIAL IMPORT
+from .github_client import GitHubClient  # THIS IS THE CRUCIAL IMPORT
+
 
 class OutputWriter:
     def __init__(self, output_file_path: Optional[Path] = None):
@@ -22,7 +23,7 @@ class OutputWriter:
     def __enter__(self):
         if self._output_file_path:
             self._output_file_path.parent.mkdir(parents=True, exist_ok=True)
-            self._file_handle = open(self._output_file_path, 'w', encoding='utf-8')
+            self._file_handle = open(self._output_file_path, "w", encoding="utf-8")
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -32,13 +33,13 @@ class OutputWriter:
     def write(self, content: str, bold: bool = False):
         if self._file_handle:
             self._file_handle.write(content)
-            self._file_handle.write('\n')
+            self._file_handle.write("\n")
         else:
             if bold:
                 sys.stdout.write(self._t.bold(content))
             else:
                 sys.stdout.write(content)
-            sys.stdout.write('\n')
+            sys.stdout.write("\n")
 
     def write_heading(self, level: int, text: str):
         if self._file_handle:
@@ -118,25 +119,37 @@ class RiskAssessment:
     level: str  # "High", "Medium", "Low"
     reasons: list[str]
 
+
 def analyze_risk(pr: DependencyUpdatePR) -> RiskAssessment:
     reasons = []
     level = "Low"
 
     for u in pr.updates:
         if u.from_version and u.to_version:
-            from_parts = u.from_version.split('.')
-            to_parts = u.to_version.split('.')
-            if len(from_parts) > 0 and len(to_parts) > 0 and from_parts[0] != to_parts[0]:
+            from_parts = u.from_version.split(".")
+            to_parts = u.to_version.split(".")
+            if (
+                len(from_parts) > 0
+                and len(to_parts) > 0
+                and from_parts[0] != to_parts[0]
+            ):
                 level = "High"
-                reasons.append(f"Major version bump from {{u.from_version}} to {{u.to_version}}")
+                reasons.append(
+                    f"Major version bump from {{u.from_version}} to {{u.to_version}}"
+                )
                 break
 
     for u in pr.updates:
         notes_lower = u.notes.lower()
-        if any(keyword in notes_lower for keyword in ["breaking change", "security", "vulnerability", "cve"]):
+        if any(
+            keyword in notes_lower
+            for keyword in ["breaking change", "security", "vulnerability", "cve"]
+        ):
             if level != "High":
                 level = "High"
-            reasons.append("Keywords like 'breaking change' or 'security' found in release notes.")
+            reasons.append(
+                "Keywords like 'breaking change' or 'security' found in release notes."
+            )
             break
 
     if pr.check_status == CheckStatus.FAILED:
@@ -147,9 +160,9 @@ def analyze_risk(pr: DependencyUpdatePR) -> RiskAssessment:
         if level == "Low":
             level = "Medium"
         reasons.append("CI checks are pending or missing.")
-    
+
     if pr.check_status == CheckStatus.SUCCESS and level == "Low":
-         reasons.append("CI checks passed.")
+        reasons.append("CI checks passed.")
 
     if not reasons:
         reasons.append("No specific risk factors identified.")
@@ -165,23 +178,31 @@ def map_risk_to_priority(risk_level: str) -> str:
     else:
         return "P3"
 
-def _extract_ghsa_details(soup: BeautifulSoup) -> tuple[Optional[str], Optional[str], Optional[str]]:
+
+def _extract_ghsa_details(
+    soup: BeautifulSoup,
+) -> tuple[Optional[str], Optional[str], Optional[str]]:
     ghsa_id = None
     advisory_summary = None
     advisory_url = None
 
-    details_element = soup.find("details", id=lambda x: x and x.startswith("ghsa-details-"))
+    details_element = soup.find(
+        "details", id=lambda x: x and x.startswith("ghsa-details-")
+    )
     if details_element:
-        ghsa_id_element = details_element.find("a", href=lambda x: x and "github.com/advisories" in x)
+        ghsa_id_element = details_element.find(
+            "a", href=lambda x: x and "github.com/advisories" in x
+        )
         if ghsa_id_element:
             ghsa_id = ghsa_id_element.text.strip()
             advisory_url = ghsa_id_element["href"]
-        
+
         summary_element = details_element.find("summary")
         if summary_element:
             advisory_summary = summary_element.text.strip()
 
     return ghsa_id, advisory_summary, advisory_url
+
 
 def parse_dependabot_pr(title: str, body: str) -> DependencyUpdateDetails:
     soup = BeautifulSoup(body, "html.parser")
@@ -275,6 +296,7 @@ def parse_package_type_from_branch_name(branch: str) -> str:
     package_type = branch_name_match.groups()[0]
     return package_type
 
+
 def fetch_dependency_prs(
     gh: GitHubClient,
     organization: str,
@@ -336,10 +358,14 @@ def fetch_dependency_prs(
             package_type = parse_package_type_from_branch_name(pr["headRefName"])
 
             soup = BeautifulSoup(pr["bodyHTML"], "html.parser")
-            ghsa_id, advisory_summary, advisory_url = _extract_ghsa_details(soup) # This will now return None, None, None
+            ghsa_id, advisory_summary, advisory_url = _extract_ghsa_details(
+                soup
+            )  # This will now return None, None, None
 
         except ValueError as exc:
-            print(f"Failed to parse details from {{pr['url']}}: {{exc}}", file=sys.stderr)
+            print(
+                f"Failed to parse details from {{pr['url']}}: {{exc}}", file=sys.stderr
+            )
             continue
 
         rollup_state = status_check_rollup["state"] if status_check_rollup else None
@@ -372,6 +398,7 @@ def fetch_dependency_prs(
         )
 
     return updates
+
 
 def merge_pr(gh: GitHubClient, pr_id: str, merge_method: str = "MERGE") -> None:
     merge_query = """
@@ -417,6 +444,7 @@ def read_action(prompt: str, actions: list[str], default: Optional[str] = None) 
 def open_url(url: str) -> None:
     subprocess.call(["open", url])
 
+
 def get_package_diff(package_type: str, update: DependencyUpdate) -> str | None:
     if not update.from_version or not update.to_version:
         return None
@@ -438,7 +466,7 @@ def get_package_diff(package_type: str, update: DependencyUpdate) -> str | None:
                 if result.returncode == 0:
                     return result.stdout
                 else:
-                    return f"Error running npm diff: {{{result.stderr}}}" 
+                    return f"Error running npm diff: {{{result.stderr}}}"
             except subprocess.TimeoutExpired:
                 return "Error: npm diff command timed out"
             except FileNotFoundError:
@@ -448,20 +476,23 @@ def get_package_diff(package_type: str, update: DependencyUpdate) -> str | None:
         case _:
             return None
 
+
 def generate_xlsx_report(
     prs: list[DependencyUpdatePR], template_path: Path, output_path: Path
 ) -> None:
     workbook = load_workbook(template_path)
-    if 'Alerts' not in workbook.sheetnames:
-        raise ValueError(f"Template '{{template_path}}' does not contain an 'Alerts' sheet.")
-    
-    sheet = workbook['Alerts']
+    if "Alerts" not in workbook.sheetnames:
+        raise ValueError(
+            f"Template '{{template_path}}' does not contain an 'Alerts' sheet."
+        )
+
+    sheet = workbook["Alerts"]
     header = [cell.value for cell in sheet[1]]
     col_map = {name: idx for idx, name in enumerate(header)}
     next_row = sheet.max_row + 1
 
     for pr in prs:
-        url_parts = pr.url.split('/')
+        url_parts = pr.url.split("/")
         repo_owner = url_parts[-4]
         repo_name = url_parts[-3]
         full_repo_name = f"{repo_owner}/{repo_name}"
@@ -472,36 +503,40 @@ def generate_xlsx_report(
 
         row_values = [None] * len(header)
 
-        row_values[col_map['Repo']] = full_repo_name
-        row_values[col_map['GHSA']] = pr.ghsa_id
-        row_values[col_map['Alerts Count']] = len(pr.updates)
-        row_values[col_map['Severity']] = risk.level
-        row_values[col_map['Priority']] = priority
-        row_values[col_map['Package']] = pr.group_name
-        row_values[col_map['Ecosystem']] = pr.package_type
-        row_values[col_map['Advisory Summary']] = pr.advisory_summary
-        row_values[col_map['Advisory URL']] = pr.advisory_url
-        row_values[col_map['PR/MR URL']] = pr.url
-        row_values[col_map['PR/MR #']] = int(pr_number)
-        row_values[col_map['Merge Decision']] = "To Review"
-        row_values[col_map['Merged?']] = "No"
-        row_values[col_map['Merged Date']] = None
-        row_values[col_map['Merged By']] = None
-        row_values[col_map['Notes']] = "\n".join(risk.reasons)
-
+        row_values[col_map["Repo"]] = full_repo_name
+        row_values[col_map["GHSA"]] = pr.ghsa_id
+        row_values[col_map["Alerts Count"]] = len(pr.updates)
+        row_values[col_map["Severity"]] = risk.level
+        row_values[col_map["Priority"]] = priority
+        row_values[col_map["Package"]] = pr.group_name
+        row_values[col_map["Ecosystem"]] = pr.package_type
+        row_values[col_map["Advisory Summary"]] = pr.advisory_summary
+        row_values[col_map["Advisory URL"]] = pr.advisory_url
+        row_values[col_map["PR/MR URL"]] = pr.url
+        row_values[col_map["PR/MR #"]] = int(pr_number)
+        row_values[col_map["Merge Decision"]] = "To Review"
+        row_values[col_map["Merged?"]] = "No"
+        row_values[col_map["Merged Date"]] = None
+        row_values[col_map["Merged By"]] = None
+        row_values[col_map["Notes"]] = "\n".join(risk.reasons)
 
         for col_idx, value in enumerate(row_values):
             sheet.cell(row=next_row, column=col_idx + 1, value=value)
-        
+
         next_row += 1
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     workbook.save(output_path)
 
+
 def review_updates(
-    gh_client: GitHubClient, prs: list[DependencyUpdatePR], output_md_path: Optional[str] = None
+    gh_client: GitHubClient,
+    prs: list[DependencyUpdatePR],
+    output_md_path: Optional[str] = None,
 ) -> None:
-    output_writer = OutputWriter(Path(output_md_path)) if output_md_path else OutputWriter()
+    output_writer = (
+        OutputWriter(Path(output_md_path)) if output_md_path else OutputWriter()
+    )
 
     with output_writer:
         if not output_writer.is_interactive():
@@ -535,7 +570,7 @@ def review_updates(
 
                     for pr in version_prs:
                         output_writer.write_heading(3, f"PR: {{{pr.url}}}")
-                        
+
                         risk = analyze_risk(pr)
                         output_writer.write_heading(4, "Risk Analysis")
                         output_writer.write(f"**Level:** {{{risk.level}}}")
@@ -544,16 +579,20 @@ def review_updates(
                             output_writer.write_list_item(reason)
                         output_writer.write("")
 
-                        output_writer.write(f"**CI Status:** {{{pr.check_status.description}}}")
+                        output_writer.write(
+                            f"**CI Status:** {{{pr.check_status.description}}}"
+                        )
                         output_writer.write("")
-                        
+
                         for u in pr.updates:
                             if u.notes:
-                                output_writer.write_heading(4, f"Release Notes for {{{u.name}}}")
+                                output_writer.write_heading(
+                                    4, f"Release Notes for {{{u.name}}}"
+                                )
                                 output_writer.write_code_block(u.notes)
-                        
+
                         for u in pr.updates:
-                             if diff_output := get_package_diff(pr.package_type, u):
+                            if diff_output := get_package_diff(pr.package_type, u):
                                 output_writer.write_heading(4, f"Diff for {{{u.name}}}")
                                 output_writer.write_code_block(diff_output, lang="diff")
 
@@ -587,7 +626,7 @@ def review_updates(
             output_writer.write_list_item(
                 f"{update.url} checks {update.check_status.description}", indent_level=1
             )
-            
+
         while True:
             action = read_action(
                 prompt="[m]erge passing, [s]kip, [q]uit, [r]eview changes, package [d]iff, [v]iew in browser, [l]ist URLs",
@@ -633,7 +672,11 @@ def review_updates(
                 ] = {}
                 for pr in prs:
                     for pr_update in pr.updates:
-                        key = (pr_update.name, pr_update.from_version, pr_update.to_version)
+                        key = (
+                            pr_update.name,
+                            pr_update.from_version,
+                            pr_update.to_version,
+                        )
                         if key not in unique_updates:
                             unique_updates[key] = (pr.package_type, pr_update)
 
@@ -657,9 +700,7 @@ Package diffs are currently only available for npm packages."""
                     for package_name, from_version, to_version, diff_output in diffs:
                         from_ver = from_version or "(unknown)"
                         to_ver = to_version or "(unknown)"
-                        combined_diff += (
-                            f"\n--- Diff for {package_name} {from_ver} -> {to_ver} ---\n"
-                        )
+                        combined_diff += f"\n--- Diff for {package_name} {from_ver} -> {to_ver} ---\n"
                         combined_diff += diff_output + "\n"
 
                     try:
