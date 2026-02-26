@@ -1,24 +1,75 @@
-from dataclasses import dataclass
+import sys
+from pathlib import Path
+from typing import Any, Optional, TextIO, Union
+
+from blessings import Terminal  # type: ignore
+from bs4 import BeautifulSoup, PageElement, Tag
+from openpyxl import load_workbook  # type: ignore[import-untyped]
+from dataclasses import dataclass, field as dataclass_field
 from enum import Enum
 import re
 import os
-from typing import Optional
 import subprocess
-import sys
 
-from bs4 import BeautifulSoup, PageElement
+from .github_client import GitHubClient  # THIS IS THE CRUCIAL IMPORT
 
-from .github_client import GitHubClient
+
+class OutputWriter:
+    def __init__(self, output_file_path: Optional[Path] = None):
+        self._output_file_path = output_file_path
+        self._file_handle: Optional[TextIO] = None
+        self._t = Terminal()
+
+    def __enter__(self) -> "OutputWriter":
+        if self._output_file_path:
+            self._output_file_path.parent.mkdir(parents=True, exist_ok=True)
+            self._file_handle = open(self._output_file_path, "w", encoding="utf-8")
+        return self
+
+    def __exit__(
+        self,
+        exc_type: Union[type, None],
+        exc_val: Union[BaseException, None],
+        exc_tb: Union[object, None],
+    ) -> None:
+        if self._file_handle:
+            self._file_handle.close()
+
+    def write(self, content: str, bold: bool = False) -> None:
+        if self._file_handle:
+            self._file_handle.write(content)
+            self._file_handle.write("\n")
+        else:
+            if bold:
+                sys.stdout.write(self._t.bold(content))
+            else:
+                sys.stdout.write(content)
+            sys.stdout.write("\n")
+
+    def write_heading(self, level: int, text: str) -> None:
+        if self._file_handle:
+            self._file_handle.write(f"{'#' * level} {text}\n\n")
+        else:
+            self.write(text, bold=True)
+
+    def write_list_item(self, text: str, indent_level: int = 0) -> None:
+        prefix = "  " * indent_level + "- "
+        if self._file_handle:
+            self._file_handle.write(f"{prefix}{{text}}\n")
+        else:
+            self.write(f"{prefix}{{text}}")
+
+    def write_code_block(self, code: str, lang: str = "") -> None:
+        if self._file_handle:
+            self._file_handle.write(f"```\n{lang}\n{code}\n```\n")
+        else:
+            self.write(code)
+
+    def is_interactive(self) -> bool:
+        return self._file_handle is None
 
 
 class CheckStatus(Enum):
-    """
-    Summary of the results of an automated check suite.
-
-    See https://docs.github.com/en/graphql/reference/objects#statuscheckrollup
-    and https://docs.github.com/en/graphql/reference/enums#statusstate.
-    """
-
     SUCCESS = 1
     FAILED = 2
     MISSING = 3
@@ -40,94 +91,137 @@ check_status_descriptions = {
 @dataclass
 class DependencyUpdate:
     name: str
-    """Name of the dependency being updated."""
-
     from_version: Optional[str]
-    """
-    The version of the dependency before the update.
-
-    May be `None` if the version could not be found in the PR details.
-    """
-
     to_version: Optional[str]
-    """
-    The version of the dependency after the update.
-
-    May be `None` if the version could not be found in the PR details.
-    """
-
     notes: str
-    """Release notes for this update."""
 
 
 @dataclass
 class DependencyUpdatePR:
     id: str
-    """ID of the pull request"""
-
     package_type: str
-    """Type of package (pip, npm etc.)"""
-
     is_group: bool
-    """True if this an update of a group of dependencies."""
-
     group_name: str
-    """Name of the dependency or group of dependencies updated in this PR."""
-
     updates: list[DependencyUpdate]
-    """The updates included in this PR."""
-
     url: str
-    """URL of the pull request on GitHub"""
-
     approved: bool
-    """Whether this PR has been given an approving review"""
-
     check_status: CheckStatus
-    """The status of automated checks for this commit (eg. CI)"""
-
     merge_method: str
-    """The preferred merge method for this PR"""
+    ghsa_id: Optional[str] = None
+    advisory_summary: Optional[str] = None
+    advisory_url: Optional[str] = None
+    reviewers: list[str] = dataclass_field(default_factory=list)
 
 
 @dataclass
 class DependencyUpdateDetails:
-    """
-    Details about contents of PR extracted from title and body.
-
-    This is a subset of `DependencyUpdatePR`.
-    """
-
     group_name: str
     is_group: bool
     updates: list[DependencyUpdate]
 
 
+@dataclass
+class RiskAssessment:
+    level: str  # "High", "Medium", "Low"
+    reasons: list[str]
+
+
+def analyze_risk(pr: DependencyUpdatePR) -> RiskAssessment:
+    reasons = []
+    level = "Low"
+
+    for u in pr.updates:
+        if u.from_version and u.to_version:
+            from_parts = u.from_version.split(".")
+            to_parts = u.to_version.split(".")
+            if (
+                len(from_parts) > 0
+                and len(to_parts) > 0
+                and from_parts[0] != to_parts[0]
+            ):
+                level = "High"
+                reasons.append(
+                    f"Major version bump from {u.from_version} to {u.to_version}"
+                )
+                break
+
+    for u in pr.updates:
+        notes_lower = u.notes.lower()
+        if any(
+            keyword in notes_lower
+            for keyword in ["breaking change", "security", "vulnerability", "cve"]
+        ):
+            if level != "High":
+                level = "High"
+            reasons.append(
+                "Keywords like 'breaking change' or 'security' found in release notes."
+            )
+            break
+
+    if pr.check_status == CheckStatus.FAILED:
+        if level != "High":
+            level = "High"
+        reasons.append("CI checks failed.")
+    elif pr.check_status in [CheckStatus.PENDING, CheckStatus.MISSING]:
+        if level == "Low":
+            level = "Medium"
+        reasons.append("CI checks are pending or missing.")
+
+    if pr.check_status == CheckStatus.SUCCESS and level == "Low":
+        reasons.append("CI checks passed.")
+
+    if not reasons:
+        reasons.append("No specific risk factors identified.")
+
+    return RiskAssessment(level=level, reasons=sorted(list(set(reasons))))
+
+
+def map_risk_to_priority(risk_level: str) -> str:
+    if risk_level == "High":
+        return "P1"
+    elif risk_level == "Medium":
+        return "P2"
+    else:
+        return "P3"
+
+
+def _extract_ghsa_details(
+    soup: BeautifulSoup,
+) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    ghsa_id = None
+    advisory_summary = None
+    advisory_url = None
+
+    details_element = soup.find(
+        "details", id=lambda x: x and x.startswith("ghsa-details-")
+    )
+    if isinstance(details_element, Tag):
+        ghsa_id_element = details_element.find(
+            "a", href=lambda x: x and "github.com/advisories" in x
+        )
+        if isinstance(ghsa_id_element, Tag):
+            ghsa_id = ghsa_id_element.text.strip()
+            advisory_url = str(ghsa_id_element["href"])
+
+        summary_element = details_element.find("summary")
+        if isinstance(summary_element, Tag):
+            advisory_summary = summary_element.text.strip()
+
+    return ghsa_id, advisory_summary, advisory_url
+
+
 def parse_dependabot_pr(title: str, body: str) -> DependencyUpdateDetails:
-    """
-    Extract information about updates in a Dependabot PR.
-
-    :param title: PR title
-    :param body: HTML body of PR
-    """
     soup = BeautifulSoup(body, "html.parser")
-
-    # PRs that update a single dependency have a title such as "Bump foo from
-    # 1.0.0 to 2.0.0" at the top.
     title_re = r"Bump (\S+) from (\S+) to (\S+)"
     fields_match = re.search(title_re, title, re.IGNORECASE)
+
     if fields_match:
         dependency, from_version, to_version = fields_match.groups()
-
-        # The body of a Dependabot PR is a series of sections, each of which is
-        # wrapped in a `<details>` container. The final `<details>` container lists
-        # the standard commands which can be issued to the bot via comments on the PR.
         details = [
             d.get_text()
             for d in soup.find_all("details")
             if not d.get_text().strip().startswith("Dependabot commands and options")
         ]
-
         return DependencyUpdateDetails(
             group_name=dependency,
             is_group=False,
@@ -141,23 +235,9 @@ def parse_dependabot_pr(title: str, body: str) -> DependencyUpdateDetails:
             ],
         )
 
-    # PRs that update a named dependency group have a title of the form "Bump
-    # the foo group with 2 updates". Dependabot may also update multiple
-    # dependencies in a PR which are not part of a named group, if those
-    # dependencies need to be updated together. Those PRs have titles like "Bump
-    # foo and bar".
-    #
-    # For each update there is a paragraph in the body containing the text
-    # "Updates bar from 1.0.0 to 2.0.0" followed by `<details>` sections for
-    # release notes, changelog and commits.
-    #
-    # As an exception, if there is only one update, the "Updates bar ..."
-    # paragraph is omitted and instead there is a paragraph with the text
-    # "Bumps the foo group with 1 update: bar".
     group_title_re = r"Bump the (\S+) group"
     group_title_match = re.search(group_title_re, title, re.IGNORECASE)
     if not group_title_match:
-        # Fallback for titles like "Bump foo and bar".
         group_title_match = re.search(r"Bump (.*)", title, re.IGNORECASE)
 
     if not group_title_match:
@@ -171,8 +251,6 @@ def parse_dependabot_pr(title: str, body: str) -> DependencyUpdateDetails:
 
     headings = [p for p in soup.find_all("p") if contains_update_heading(p)]
 
-    # Handle case of a single update where the "Updates ..." headings are
-    # missing.
     single_update_pat = r"Bumps the \S+ group with 1 update: (\S+)"
     if not headings:
         headings = [
@@ -196,11 +274,6 @@ def parse_dependabot_pr(title: str, body: str) -> DependencyUpdateDetails:
             to_version = None
 
         notes: list[str] = []
-
-        # Gather notes from `<details>` elements following the heading, until
-        # we come to the next heading or the `<hr>` that separates the
-        # update-specific notes from the general Dependabot commands and
-        # options.
         curr = heading.next_sibling
         while curr and not contains_update_heading(curr) and curr.name != "hr":
             if curr.name == "details":
@@ -222,12 +295,7 @@ def parse_dependabot_pr(title: str, body: str) -> DependencyUpdateDetails:
 
 
 def parse_package_type_from_branch_name(branch: str) -> str:
-    """
-    Extract package type information from Dependabot PR.
-
-    This relies on Dependabot PRs using branch names of the form `dependabot/{package_type}/{package_name}-{version}`
-    """
-    branch_name_re = "^dependabot/([^/]+)/.*"
+    branch_name_re = r"^dependabot/([^/]+)/.*"
     branch_name_match = re.search(branch_name_re, branch)
     if not branch_name_match:
         raise ValueError(f"Failed to parse branch name '{branch}'")
@@ -259,6 +327,18 @@ def fetch_dependency_prs(
             headRefName
             reviewDecision
             url
+
+            assignees(first: 10) {
+              nodes { login }
+            }
+            reviewRequests(first: 10) {
+              nodes {
+                requestedReviewer {
+                  ... on User { login }
+                  ... on Team { name }
+                }
+              }
+            }
 
             commits (last:1) {
               nodes {
@@ -294,6 +374,12 @@ def fetch_dependency_prs(
                 "statusCheckRollup"
             ]
             package_type = parse_package_type_from_branch_name(pr["headRefName"])
+
+            soup = BeautifulSoup(pr["bodyHTML"], "html.parser")
+            ghsa_id, advisory_summary, advisory_url = _extract_ghsa_details(
+                soup
+            )  # This will now return None, None, None
+
         except ValueError as exc:
             print(f"Failed to parse details from {pr['url']}: {exc}", file=sys.stderr)
             continue
@@ -306,7 +392,6 @@ def fetch_dependency_prs(
         elif rollup_state == "ERROR" or rollup_state == "FAILURE":
             check_status = CheckStatus.FAILED
         elif rollup_state is not None:
-            # Any states we don't recognize are treated as failed
             check_status = CheckStatus.FAILED
         else:
             check_status = CheckStatus.MISSING
@@ -322,19 +407,39 @@ def fetch_dependency_prs(
                 merge_method=pr["repository"]["viewerDefaultMergeMethod"],
                 package_type=package_type,
                 url=pr["url"],
+                ghsa_id=ghsa_id,
+                advisory_summary=advisory_summary,
+                advisory_url=advisory_url,
+                reviewers=_extract_reviewers(pr),
             )
         )
 
     return updates
 
 
+def _extract_reviewers(pr: dict[str, Any]) -> list[str]:
+    """Collect unique reviewer / assignee logins from a PR node."""
+    people: list[str] = []
+    for node in pr.get("assignees", {}).get("nodes", []):
+        login: str | None = node.get("login")
+        if login:
+            people.append(login)
+    for node in pr.get("reviewRequests", {}).get("nodes", []):
+        reviewer = node.get("requestedReviewer", {}) or {}
+        name: str | None = reviewer.get("login") or reviewer.get("name")
+        if name:
+            people.append(name)
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    unique: list[str] = []
+    for p in people:
+        if p not in seen:
+            seen.add(p)
+            unique.append(p)
+    return unique
+
+
 def merge_pr(gh: GitHubClient, pr_id: str, merge_method: str = "MERGE") -> None:
-    """
-    Merge a GitHub Pull Request.
-
-    :param merge_method: Merge strategy to use. See https://docs.github.com/en/graphql/reference/enums#pullrequestmergemethod
-    """
-
     merge_query = """
     mutation mergePullRequest($input: MergePullRequestInput!) {
       mergePullRequest(input: $input) {
@@ -351,56 +456,35 @@ def merge_pr(gh: GitHubClient, pr_id: str, merge_method: str = "MERGE") -> None:
 
 
 class PromptAbortError(Exception):
-    """
-    Exception raised if the user attempts to exit an interactive prompt.
-    """
-
     pass
 
 
 def read_action(prompt: str, actions: list[str], default: Optional[str] = None) -> str:
-    """
-    Read a command from the user.
-
-    The user can enter any action from `actions` or a prefix of one. Matching
-    is case-insensitive.
-
-    :param prompt: Prompt telling the user what commands are available
-    :param actions: List of actions the user can perform. These should all be lower-case.
-    :param default: Default response in non-interactive environments
-    :return: Action from the `actions` list
-    """
     if not os.isatty(sys.stdout.fileno()) and default:
         return default
 
     while True:
         try:
             user_input = input(f"{prompt} > ").strip().lower()
-        except EOFError as e:  # Ctrl+D
+        except EOFError as e:
             raise PromptAbortError() from e
-        except KeyboardInterrupt as e:  # Ctrl+C
+        except KeyboardInterrupt as e:
             raise PromptAbortError() from e
 
-        # Look for an exact match
         for action in actions:
             if action == user_input:
                 return action
 
-        # If no exact match found, look for a prefix match
         for action in actions:
             if action.startswith(user_input):
                 return action
 
 
 def open_url(url: str) -> None:
-    """Open a URL in the user's default browser."""
     subprocess.call(["open", url])
 
 
 def get_package_diff(package_type: str, update: DependencyUpdate) -> str | None:
-    """
-    Get the diff showing the changes in the contents of a package.
-    """
     if not update.from_version or not update.to_version:
         return None
 
@@ -415,140 +499,257 @@ def get_package_diff(package_type: str, update: DependencyUpdate) -> str | None:
                     "--diff",
                     f"{update.name}@{update.to_version}",
                 ]
-                print(f"Running command: {' '.join(cmd)}")
+                print(f"Running command: {{{' '.join(cmd)}}}")
+                sys.stdout.flush()
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
                 if result.returncode == 0:
                     return result.stdout
                 else:
-                    return f"Error running npm diff: {result.stderr}"
+                    return f"Error running npm diff: {{{result.stderr}}}"
             except subprocess.TimeoutExpired:
                 return "Error: npm diff command timed out"
             except FileNotFoundError:
                 return "Error: npm command not found. Please ensure npm is installed and in your PATH."
             except Exception as e:
-                return f"Error running npm diff: {str(e)}"
+                return f"Error running npm diff: {{{str(e)}}}"
         case _:
-            # TODO - Find the best available equivalents for PyPI etc.
             return None
 
 
-def review_updates(gh_client: GitHubClient, prs: list[DependencyUpdatePR]) -> None:
-    """
-    Perform an interactive review/merge of a batch of updates for a dependency.
-    """
-
-    version_bumps = set()
-    for pr in prs:
-        for u in pr.updates:
-            version_bumps.add((u.name, u.from_version, u.to_version))
-
-    print("Versions:")
-    for name, from_ver, to_ver in version_bumps:
-        from_ver = from_ver or "(unknown)"
-        to_ver = to_ver or "(unknown)"
-        print(f"  {name} {from_ver} -> {to_ver}")
-
-    updates_by_status: dict[CheckStatus, list[DependencyUpdatePR]] = {}
-    for update in prs:
-        if update.check_status not in updates_by_status:
-            updates_by_status[update.check_status] = []
-        updates_by_status[update.check_status].append(update)
-
-    check_statuses: list[str] = []
-    for status, items in updates_by_status.items():
-        check_statuses.append(f"{len(items)} {status.description}")
-    print(f"Checks: {', '.join(check_statuses)}")
-
-    for update in prs:
-        if update.check_status == CheckStatus.SUCCESS:
-            continue
-        print(f"  {update.url} checks {update.check_status.description}")
-
-    while True:
-        action = read_action(
-            prompt="[m]erge passing, [s]kip, [q]uit, [r]eview changes, package [d]iff, [v]iew in browser, [l]ist URLs",
-            actions=["diff", "merge", "skip", "quit", "review", "list", "view"],
-            default="skip",
+def generate_xlsx_report(
+    prs: list[DependencyUpdatePR], template_path: Path, output_path: Path
+) -> None:
+    workbook = load_workbook(template_path)
+    if "Alerts" not in workbook.sheetnames:
+        raise ValueError(
+            f"Template '{template_path}' does not contain an 'Alerts' sheet."
         )
-        if action == "quit":
-            return
-        elif action == "merge":
-            for update in prs:
-                if update.check_status != CheckStatus.SUCCESS:
-                    # Skip PRs with missing or failed checks
-                    continue
 
-                print(f"Merging {update.url} …")
-                try:
-                    merge_pr(
-                        gh_client, pr_id=update.id, merge_method=update.merge_method
-                    )
-                except Exception as e:
-                    print("Merge failed: ", repr(e))
-            break
-        elif action == "skip":
-            break
-        elif action == "review":
-            notes = []
-            for u in prs[0].updates:
-                notes += u.notes.splitlines()
-            max_lines = 35
-            if len(notes) > max_lines:
-                notes = notes[0:max_lines]
-                notes.append('... (Enter "view" to see full notes in browser)')
-            for line in notes:
-                print(f"  {line}")
-        elif action == "view":
-            open_url(prs[0].url)
-        elif action == "list":
-            urls = sorted(u.url for u in prs)
-            for url in urls:
-                print(f"  {url}")
-        elif action == "diff":
-            # Collect unique (name, from_version, to_version) combinations
-            unique_updates: dict[
-                tuple[str, str | None, str | None], tuple[str, DependencyUpdate]
-            ] = {}
+    sheet = workbook["Alerts"]
+    header = [cell.value for cell in sheet[1]]
+    col_map = {name: idx for idx, name in enumerate(header)}
+    next_row = sheet.max_row + 1
+
+    for pr in prs:
+        url_parts = pr.url.split("/")
+        repo_owner = url_parts[-4]
+        repo_name = url_parts[-3]
+        full_repo_name = f"{repo_owner}/{repo_name}"
+        pr_number = url_parts[-1]
+
+        risk = analyze_risk(pr)
+        priority = map_risk_to_priority(risk.level)
+
+        row_values: list[Union[str, int, None]] = [None] * len(header)
+
+        row_values[col_map["Repo"]] = full_repo_name
+        row_values[col_map["GHSA"]] = pr.ghsa_id
+        row_values[col_map["Alerts Count"]] = len(pr.updates)
+        row_values[col_map["Severity"]] = risk.level
+        row_values[col_map["Priority"]] = priority
+        row_values[col_map["Package"]] = pr.group_name
+        row_values[col_map["Ecosystem"]] = pr.package_type
+        row_values[col_map["Advisory Summary"]] = pr.advisory_summary
+        row_values[col_map["Advisory URL"]] = pr.advisory_url
+        row_values[col_map["PR/MR URL"]] = pr.url
+        row_values[col_map["PR/MR #"]] = int(pr_number)
+        row_values[col_map["Merge Decision"]] = "To Review"
+        row_values[col_map["Merged?"]] = "No"
+        row_values[col_map["Merged Date"]] = None
+        row_values[col_map["Merged By"]] = None
+        row_values[col_map["Notes"]] = "\n".join(risk.reasons)
+
+        for col_idx, value in enumerate(row_values):
+            sheet.cell(row=next_row, column=col_idx + 1, value=value)
+
+        next_row += 1
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    workbook.save(output_path)
+
+
+def review_updates(
+    gh_client: GitHubClient,
+    prs: list[DependencyUpdatePR],
+    output_md_path: Optional[str] = None,
+) -> None:
+    output_writer = (
+        OutputWriter(Path(output_md_path)) if output_md_path else OutputWriter()
+    )
+
+    with output_writer:
+        if not output_writer.is_interactive():
+            prs_by_group_name: dict[str, list[DependencyUpdatePR]] = {}
             for pr in prs:
-                for pr_update in pr.updates:
-                    key = (pr_update.name, pr_update.from_version, pr_update.to_version)
-                    if key not in unique_updates:
-                        unique_updates[key] = (pr.package_type, pr_update)
+                if pr.group_name not in prs_by_group_name:
+                    prs_by_group_name[pr.group_name] = []
+                prs_by_group_name[pr.group_name].append(pr)
 
-            diffs = []
-            for (name, from_version, to_version), (
-                package_type,
-                dep_update,
-            ) in unique_updates.items():
-                if diff_output := get_package_diff(package_type, dep_update):
-                    diffs.append((name, from_version, to_version, diff_output))
+            for group_name, group_prs in prs_by_group_name.items():
+                output_writer.write_heading(1, f"Dependency: {{{group_name}}}")
 
-            if not diffs:
-                print(
-                    """Package diffs are not available for these packages.
+                prs_by_version: dict[str, list[DependencyUpdatePR]] = {}
+                for pr in group_prs:
+                    version_key = " -> ".join(
+                        sorted(
+                            list(
+                                set(
+                                    f"{u.from_version or '?'} -> {u.to_version or '?'}"
+                                    for u in pr.updates
+                                )
+                            )
+                        )
+                    )
+                    if version_key not in prs_by_version:
+                        prs_by_version[version_key] = []
+                    prs_by_version[version_key].append(pr)
+
+                for version_key, version_prs in prs_by_version.items():
+                    output_writer.write_heading(2, f"Version: {{{version_key}}}")
+
+                    for pr in version_prs:
+                        output_writer.write_heading(3, f"PR: {{{pr.url}}}")
+
+                        risk = analyze_risk(pr)
+                        output_writer.write_heading(4, "Risk Analysis")
+                        output_writer.write(f"**Level:** {{{risk.level}}}")
+                        output_writer.write("**Reasons:**")
+                        for reason in risk.reasons:
+                            output_writer.write_list_item(reason)
+                        output_writer.write("")
+
+                        output_writer.write(
+                            f"**CI Status:** {{{pr.check_status.description}}}"
+                        )
+                        output_writer.write("")
+
+                        for u in pr.updates:
+                            if u.notes:
+                                output_writer.write_heading(
+                                    4, f"Release Notes for {{{u.name}}}"
+                                )
+                                output_writer.write_code_block(u.notes)
+
+                        for u in pr.updates:
+                            if diff_output := get_package_diff(pr.package_type, u):
+                                output_writer.write_heading(4, f"Diff for {{{u.name}}}")
+                                output_writer.write_code_block(diff_output, lang="diff")
+
+            return
+
+        version_bumps = set()
+        for pr in prs:
+            for u in pr.updates:
+                version_bumps.add((u.name, u.from_version, u.to_version))
+
+        output_writer.write_heading(2, "Versions")
+        for name, from_ver, to_ver in version_bumps:
+            from_ver = from_ver or "(unknown)"
+            to_ver = to_ver or "(unknown)"
+            output_writer.write_list_item(f"{name} {from_ver} -> {to_ver}")
+
+        updates_by_status: dict[CheckStatus, list[DependencyUpdatePR]] = {}
+        for update in prs:
+            if update.check_status not in updates_by_status:
+                updates_by_status[update.check_status] = []
+            updates_by_status[update.check_status].append(update)
+
+        check_statuses: list[str] = []
+        for status, items in updates_by_status.items():
+            check_statuses.append(f"{len(items)} {status.description}")
+        output_writer.write(f"Checks: {', '.join(check_statuses)}")
+
+        for update in prs:
+            if update.check_status == CheckStatus.SUCCESS:
+                continue
+            output_writer.write_list_item(
+                f"{update.url} checks {update.check_status.description}", indent_level=1
+            )
+
+        while True:
+            action = read_action(
+                prompt="[m]erge passing, [s]kip, [q]uit, [r]eview changes, package [d]iff, [v]iew in browser, [l]ist URLs",
+                actions=["diff", "merge", "skip", "quit", "review", "list", "view"],
+                default="skip",
+            )
+            if action == "quit":
+                return
+            elif action == "merge":
+                for update in prs:
+                    if update.check_status != CheckStatus.SUCCESS:
+                        continue
+
+                    output_writer.write(f"Merging {update.url} …")
+                    try:
+                        merge_pr(
+                            gh_client, pr_id=update.id, merge_method=update.merge_method
+                        )
+                    except Exception as e:
+                        output_writer.write(f"Merge failed: {repr(e)}")
+                break
+            elif action == "skip":
+                break
+            elif action == "review":
+                notes = []
+                for u in prs[0].updates:
+                    notes += u.notes.splitlines()
+                max_lines = 35
+                if len(notes) > max_lines:
+                    notes = notes[0:max_lines]
+                    notes.append('... (Enter "view" to see full notes in browser)')
+                for line in notes:
+                    output_writer.write(f"  {line}")
+            elif action == "view":
+                open_url(prs[0].url)
+            elif action == "list":
+                urls = sorted(u.url for u in prs)
+                for url in urls:
+                    output_writer.write(f"  {url}")
+            elif action == "diff":
+                unique_updates: dict[
+                    tuple[str, str | None, str | None], tuple[str, DependencyUpdate]
+                ] = {}
+                for pr in prs:
+                    for pr_update in pr.updates:
+                        key = (
+                            pr_update.name,
+                            pr_update.from_version,
+                            pr_update.to_version,
+                        )
+                        if key not in unique_updates:
+                            unique_updates[key] = (pr.package_type, pr_update)
+
+                diffs = []
+                for (name, from_version, to_version), (
+                    package_type,
+                    dep_update,
+                ) in unique_updates.items():
+                    if diff_output := get_package_diff(package_type, dep_update):
+                        diffs.append((name, from_version, to_version, diff_output))
+
+                if not diffs:
+                    output_writer.write(
+                        """
+Package diffs are not available for these packages.
 
 Package diffs are currently only available for npm packages."""
-                )
-            else:
-                # Combine all diffs into a single string for the pager
-                combined_diff = ""
-                for package_name, from_version, to_version, diff_output in diffs:
-                    from_ver = from_version or "(unknown)"
-                    to_ver = to_version or "(unknown)"
-                    combined_diff += (
-                        f"\n--- Diff for {package_name} {from_ver} -> {to_ver} ---\n"
                     )
-                    combined_diff += diff_output + "\n"
+                else:
+                    combined_diff = ""
+                    for package_name, from_version, to_version, diff_output in diffs:
+                        from_ver = from_version or "(unknown)"
+                        to_ver = to_version or "(unknown)"
+                        combined_diff += f"\n--- Diff for {package_name} {from_ver} -> {to_ver} ---\n"
+                        combined_diff += diff_output + "\n"
 
-                # Use less to display the diff interactively
-                try:
-                    process = subprocess.Popen(
-                        ["less"], stdin=subprocess.PIPE, text=True
-                    )
-                    process.communicate(input=combined_diff)
-                except FileNotFoundError:
-                    print(
-                        "Error: 'less' command not found. Please install less to view diffs."
-                    )
-                except subprocess.CalledProcessError:
-                    print("Error: Failed to display diff with less.")
+                    try:
+                        process = subprocess.Popen(
+                            ["less"], stdin=subprocess.PIPE, text=True
+                        )
+                        process.communicate(input=combined_diff)
+                    except FileNotFoundError:
+                        output_writer.write(
+                            "Error: 'less' command not found. Please install less to view diffs."
+                        )
+                    except subprocess.CalledProcessError:
+                        output_writer.write("Error: Failed to display diff with less.")
