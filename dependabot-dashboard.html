@@ -1,0 +1,866 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dependabot Review</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <style>
+    :root {
+      --background: #111111;
+      --foreground: #FFFFFF;
+      --card: #1A1A1A;
+      --card-foreground: #FFFFFF;
+      --muted: #2E2E2E;
+      --muted-foreground: #B8B9B6;
+      --border: #2E2E2E;
+      --primary: #FF8400;
+      --primary-foreground: #111111;
+      --secondary: #2E2E2E;
+      --secondary-foreground: #FFFFFF;
+      --sidebar: #18181b;
+      --sidebar-accent: #2a2a30;
+      --sidebar-foreground: #fafafa;
+      --sidebar-border: rgba(255, 255, 255, 0.1);
+      --color-success-foreground: #B6FFCE;
+      --color-error-foreground: #FF5C33;
+      --color-warning-foreground: #FF8400;
+      --font-primary: 'JetBrains Mono', monospace;
+      --font-secondary: 'Geist', sans-serif;
+      --radius-m: 16px;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: var(--font-secondary);
+      background-color: var(--background);
+      color: var(--foreground);
+      min-height: 100vh;
+    }
+
+    .dashboard {
+      display: flex;
+      height: 100vh;
+      width: 100%;
+    }
+
+    /* Sidebar */
+    .sidebar {
+      width: 240px;
+      background-color: var(--sidebar);
+      border-right: 1px solid var(--sidebar-border);
+      display: flex;
+      flex-direction: column;
+      padding: 16px 12px;
+      flex-shrink: 0;
+    }
+
+    .sidebar-logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      margin-bottom: 24px;
+    }
+
+    .sidebar-logo-icon {
+      width: 24px;
+      height: 24px;
+      background-color: var(--primary);
+      border-radius: 50%;
+    }
+
+    .sidebar-logo-text {
+      font-family: var(--font-primary);
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--sidebar-foreground);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .sidebar-nav {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex: 1;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      color: var(--muted-foreground);
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 500;
+      transition: all 0.2s ease;
+      cursor: pointer;
+    }
+
+    .nav-item:hover {
+      background-color: var(--sidebar-accent);
+      color: var(--sidebar-foreground);
+    }
+
+    .nav-item.active {
+      background-color: var(--sidebar-accent);
+      color: var(--sidebar-foreground);
+    }
+
+    .nav-item .material-icons {
+      font-size: 20px;
+    }
+
+    .sidebar-footer {
+      padding: 16px 12px;
+      border-top: 1px solid var(--sidebar-border);
+      margin-top: auto;
+    }
+
+    .user-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .user-name {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--sidebar-foreground);
+    }
+
+    .user-email {
+      font-size: 12px;
+      color: var(--muted-foreground);
+    }
+
+    /* Main Content */
+    .main-content {
+      flex: 1;
+      padding: 40px;
+      display: flex;
+      flex-direction: column;
+      gap: 32px;
+      overflow-y: auto;
+      background-color: var(--background);
+    }
+
+    /* Page Header */
+    .page-header {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .page-title {
+      font-family: var(--font-primary);
+      font-size: 32px;
+      font-weight: 700;
+      color: var(--foreground);
+      line-height: 1.2;
+    }
+
+    .page-subtitle {
+      font-family: var(--font-secondary);
+      font-size: 14px;
+      font-weight: 400;
+      color: var(--muted-foreground);
+      line-height: 1.5;
+    }
+
+    /* Upload Section */
+    .upload-section {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .upload-area {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 24px;
+      background-color: var(--card);
+      border: 2px dashed var(--border);
+      border-radius: var(--radius-m);
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .upload-area:hover {
+      border-color: var(--primary);
+      background-color: var(--muted);
+    }
+
+    .upload-area.dragover {
+      border-color: var(--primary);
+      background-color: var(--muted);
+    }
+
+    .upload-area .material-icons {
+      font-size: 24px;
+      color: var(--primary);
+    }
+
+    .upload-text {
+      font-size: 14px;
+      color: var(--muted-foreground);
+    }
+
+    .upload-text strong {
+      color: var(--primary);
+    }
+
+    .file-input {
+      display: none;
+    }
+
+    .file-name {
+      font-size: 14px;
+      color: var(--color-success-foreground);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* Stats Grid */
+    .stats-grid {
+      display: flex;
+      gap: 24px;
+    }
+
+    .stat-card {
+      flex: 1;
+      background-color: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-m);
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .stat-label {
+      font-family: var(--font-secondary);
+      font-size: 12px;
+      font-weight: 400;
+      color: var(--muted-foreground);
+      line-height: 1.5;
+    }
+
+    .stat-value {
+      font-family: var(--font-primary);
+      font-size: 36px;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .stat-value.default { color: var(--foreground); }
+    .stat-value.success { color: var(--color-success-foreground); }
+    .stat-value.error { color: var(--color-error-foreground); }
+    .stat-value.warning { color: var(--color-warning-foreground); }
+
+    /* Table Section */
+    .table-section {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .table-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .table-title {
+      font-family: var(--font-primary);
+      font-size: 20px;
+      font-weight: 600;
+      color: var(--foreground);
+      line-height: 1.2;
+    }
+
+    .table-actions {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .filter-select {
+      padding: 8px 12px;
+      background-color: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--foreground);
+      font-family: var(--font-secondary);
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 16px;
+      background-color: var(--primary);
+      color: var(--primary-foreground);
+      border: none;
+      border-radius: 8px;
+      font-family: var(--font-secondary);
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: opacity 0.2s ease;
+    }
+
+    .btn-primary:hover { opacity: 0.9; }
+    .btn-primary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .btn-secondary {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 16px;
+      background-color: var(--secondary);
+      color: var(--secondary-foreground);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-family: var(--font-secondary);
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .btn-secondary:hover {
+      background-color: var(--muted);
+    }
+
+    /* Risk Labels */
+    .risk-label {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-family: var(--font-secondary);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .risk-low {
+      color: var(--color-success-foreground);
+      background-color: rgba(182, 255, 206, 0.1);
+    }
+
+    .risk-medium {
+      color: var(--color-warning-foreground);
+      background-color: rgba(255, 132, 0, 0.1);
+    }
+
+    .risk-high {
+      color: var(--color-error-foreground);
+      background-color: rgba(255, 92, 51, 0.1);
+    }
+
+    /* Priority Labels */
+    .priority-label {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-family: var(--font-primary);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .priority-p1 {
+      color: var(--color-error-foreground);
+      background-color: rgba(255, 92, 51, 0.15);
+    }
+
+    .priority-p2 {
+      color: var(--color-warning-foreground);
+      background-color: rgba(255, 132, 0, 0.15);
+    }
+
+    .priority-p3 {
+      color: var(--color-success-foreground);
+      background-color: rgba(182, 255, 206, 0.15);
+    }
+
+    /* Data Table */
+    .data-table {
+      width: 100%;
+      background-color: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-m);
+      overflow: hidden;
+    }
+
+    .data-table table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .data-table th,
+    .data-table td {
+      padding: 14px 16px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .data-table th {
+      font-family: var(--font-secondary);
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted-foreground);
+      line-height: 1.5;
+      background-color: var(--muted);
+    }
+
+    .data-table td {
+      font-family: var(--font-secondary);
+      font-size: 14px;
+      font-weight: 400;
+      color: var(--foreground);
+      line-height: 1.5;
+    }
+
+    .data-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    .data-table tr:hover td {
+      background-color: var(--muted);
+    }
+
+    .status-passed, .status-success {
+      color: var(--color-success-foreground);
+      font-weight: 500;
+    }
+
+    .status-failed, .status-error {
+      color: var(--color-error-foreground);
+      font-weight: 500;
+    }
+
+    .status-pending, .status-warning {
+      color: var(--color-warning-foreground);
+      font-weight: 500;
+    }
+
+    .link {
+      color: var(--primary);
+      text-decoration: none;
+    }
+
+    .link:hover {
+      text-decoration: underline;
+    }
+
+    /* Empty State */
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 64px 32px;
+      text-align: center;
+      color: var(--muted-foreground);
+    }
+
+    .empty-state .material-icons {
+      font-size: 48px;
+      margin-bottom: 16px;
+      opacity: 0.5;
+    }
+
+    .empty-state h3 {
+      font-size: 18px;
+      margin-bottom: 8px;
+      color: var(--foreground);
+    }
+
+    .empty-state p {
+      font-size: 14px;
+    }
+
+    /* Scrollable table container */
+    .table-container {
+      max-height: 500px;
+      overflow-y: auto;
+    }
+
+    .table-container::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    .table-container::-webkit-scrollbar-track {
+      background: var(--muted);
+      border-radius: 4px;
+    }
+
+    .table-container::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 4px;
+    }
+
+    .table-container::-webkit-scrollbar-thumb:hover {
+      background: var(--muted-foreground);
+    }
+  </style>
+</head>
+<body>
+  <div class="dashboard">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <div class="sidebar-logo-icon"></div>
+        <span class="sidebar-logo-text">Hypothesis</span>
+      </div>
+
+      <nav class="sidebar-nav">
+        <a href="#" class="nav-item active">
+          <span class="material-icons">dashboard</span>
+          Dashboard
+        </a>
+        <a href="#" class="nav-item">
+          <span class="material-icons">merge</span>
+          Pull Requests
+        </a>
+        <a href="#" class="nav-item">
+          <span class="material-icons">warning</span>
+          Alerts
+        </a>
+        <a href="#" class="nav-item">
+          <span class="material-icons">folder</span>
+          Repositories
+        </a>
+        <a href="#" class="nav-item">
+          <span class="material-icons">settings</span>
+          Settings
+        </a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="user-info">
+          <span class="user-name">Dependabot Review</span>
+          <span class="user-email">v1.0.0</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <!-- Page Header -->
+      <header class="page-header">
+        <h1 class="page-title">Dependabot Review</h1>
+        <p class="page-subtitle">Review and merge dependency updates across repositories</p>
+
+        <!-- Upload Section -->
+        <div class="upload-section">
+          <label class="upload-area" id="uploadArea">
+            <span class="material-icons">upload_file</span>
+            <span class="upload-text">
+              <strong>Upload XLSX</strong> or drag and drop
+            </span>
+            <input type="file" class="file-input" id="fileInput" accept=".xlsx,.xls">
+          </label>
+          <span class="file-name" id="fileName"></span>
+        </div>
+      </header>
+
+      <!-- Stats Grid -->
+      <section class="stats-grid">
+        <div class="stat-card">
+          <span class="stat-label">Total Alerts</span>
+          <span class="stat-value default" id="statTotal">0</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">High Priority (P1)</span>
+          <span class="stat-value error" id="statHigh">0</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Medium Priority (P2)</span>
+          <span class="stat-value warning" id="statMedium">0</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Low Priority (P3)</span>
+          <span class="stat-value success" id="statLow">0</span>
+        </div>
+      </section>
+
+      <!-- Table Section -->
+      <section class="table-section">
+        <div class="table-header">
+          <h2 class="table-title">Dependabot Alerts</h2>
+          <div class="table-actions">
+            <select class="filter-select" id="filterSeverity">
+              <option value="all">All Severities</option>
+              <option value="High">High</option>
+              <option value="Medium">Medium</option>
+              <option value="Low">Low</option>
+            </select>
+            <select class="filter-select" id="filterMerged">
+              <option value="all">All Status</option>
+              <option value="No">Not Merged</option>
+              <option value="Yes">Merged</option>
+            </select>
+            <button class="btn-secondary" id="exportBtn" disabled>
+              <span class="material-icons" style="font-size: 18px;">download</span>
+              Export
+            </button>
+          </div>
+        </div>
+
+        <div class="data-table">
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Repository</th>
+                  <th>Package</th>
+                  <th>Ecosystem</th>
+                  <th>Severity</th>
+                  <th>Priority</th>
+                  <th>PR #</th>
+                  <th>Merged?</th>
+                  <th>Notes</th>
+                </tr>
+              </thead>
+              <tbody id="tableBody">
+                <tr>
+                  <td colspan="8">
+                    <div class="empty-state">
+                      <span class="material-icons">upload_file</span>
+                      <h3>No data loaded</h3>
+                      <p>Upload an XLSX file to view Dependabot alerts</p>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    // State
+    let allData = [];
+    let filteredData = [];
+
+    // DOM Elements
+    const fileInput = document.getElementById('fileInput');
+    const uploadArea = document.getElementById('uploadArea');
+    const fileName = document.getElementById('fileName');
+    const tableBody = document.getElementById('tableBody');
+    const filterSeverity = document.getElementById('filterSeverity');
+    const filterMerged = document.getElementById('filterMerged');
+    const exportBtn = document.getElementById('exportBtn');
+
+    // Stats elements
+    const statTotal = document.getElementById('statTotal');
+    const statHigh = document.getElementById('statHigh');
+    const statMedium = document.getElementById('statMedium');
+    const statLow = document.getElementById('statLow');
+
+    // File upload handling
+    fileInput.addEventListener('change', handleFileUpload);
+
+    uploadArea.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      uploadArea.classList.add('dragover');
+    });
+
+    uploadArea.addEventListener('dragleave', () => {
+      uploadArea.classList.remove('dragover');
+    });
+
+    uploadArea.addEventListener('drop', (e) => {
+      e.preventDefault();
+      uploadArea.classList.remove('dragover');
+      const files = e.dataTransfer.files;
+      if (files.length > 0) {
+        handleFile(files[0]);
+      }
+    });
+
+    function handleFileUpload(e) {
+      const file = e.target.files[0];
+      if (file) {
+        handleFile(file);
+      }
+    }
+
+    function handleFile(file) {
+      if (!file.name.match(/\.(xlsx|xls)$/i)) {
+        alert('Please upload an Excel file (.xlsx or .xls)');
+        return;
+      }
+
+      fileName.innerHTML = `<span class="material-icons" style="font-size: 18px;">check_circle</span> ${file.name}`;
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = new Uint8Array(e.target.result);
+          const workbook = XLSX.read(data, { type: 'array' });
+
+          // Try to find the Alerts sheet, otherwise use first sheet
+          let sheetName = workbook.SheetNames.find(name =>
+            name.toLowerCase().includes('alert')
+          ) || workbook.SheetNames[0];
+
+          const worksheet = workbook.Sheets[sheetName];
+          const jsonData = XLSX.utils.sheet_to_json(worksheet);
+
+          processData(jsonData);
+        } catch (error) {
+          console.error('Error parsing file:', error);
+          alert('Error parsing the Excel file. Please check the format.');
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    function processData(jsonData) {
+      // Map the data to our expected format
+      allData = jsonData.map((row, index) => ({
+        id: index,
+        repo: row['Repo'] || row['Repository'] || '',
+        ghsa: row['GHSA'] || row['GHSA ID'] || '',
+        alertsCount: row['Alerts Count'] || 1,
+        severity: row['Severity'] || 'Unknown',
+        priority: row['Priority'] || 'P3',
+        package: row['Package'] || row['Dependency'] || '',
+        ecosystem: row['Ecosystem'] || row['Package Type'] || '',
+        advisorySummary: row['Advisory Summary'] || '',
+        advisoryUrl: row['Advisory URL'] || '',
+        prUrl: row['PR/MR URL'] || row['PR URL'] || '',
+        prNumber: row['PR/MR #'] || row['PR #'] || '',
+        mergeDecision: row['Merge Decision'] || '',
+        merged: row['Merged?'] || 'No',
+        mergedDate: row['Merged Date'] || '',
+        mergedBy: row['Merged By'] || '',
+        notes: row['Notes'] || ''
+      }));
+
+      filteredData = [...allData];
+      updateStats();
+      renderTable();
+      exportBtn.disabled = false;
+    }
+
+    function updateStats() {
+      const total = filteredData.length;
+      const high = filteredData.filter(d => d.priority === 'P1' || d.severity === 'High').length;
+      const medium = filteredData.filter(d => d.priority === 'P2' || d.severity === 'Medium').length;
+      const low = filteredData.filter(d => d.priority === 'P3' || d.severity === 'Low').length;
+
+      statTotal.textContent = total;
+      statHigh.textContent = high;
+      statMedium.textContent = medium;
+      statLow.textContent = low;
+    }
+
+    function renderTable() {
+      if (filteredData.length === 0) {
+        tableBody.innerHTML = `
+          <tr>
+            <td colspan="8">
+              <div class="empty-state">
+                <span class="material-icons">search_off</span>
+                <h3>No matching alerts</h3>
+                <p>Try adjusting your filters</p>
+              </div>
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      tableBody.innerHTML = filteredData.map(row => `
+        <tr>
+          <td>${escapeHtml(row.repo)}</td>
+          <td><strong>${escapeHtml(row.package)}</strong></td>
+          <td>${escapeHtml(row.ecosystem)}</td>
+          <td><span class="risk-label risk-${row.severity.toLowerCase()}">${escapeHtml(row.severity)}</span></td>
+          <td><span class="priority-label priority-${row.priority.toLowerCase()}">${escapeHtml(row.priority)}</span></td>
+          <td>${row.prUrl ? `<a href="${escapeHtml(row.prUrl)}" target="_blank" class="link">#${escapeHtml(String(row.prNumber))}</a>` : '-'}</td>
+          <td class="${row.merged === 'Yes' ? 'status-passed' : 'status-pending'}">${escapeHtml(row.merged)}</td>
+          <td title="${escapeHtml(row.notes)}">${truncate(row.notes, 50)}</td>
+        </tr>
+      `).join('');
+    }
+
+    function escapeHtml(text) {
+      if (!text) return '';
+      const div = document.createElement('div');
+      div.textContent = String(text);
+      return div.innerHTML;
+    }
+
+    function truncate(text, maxLength) {
+      if (!text) return '';
+      text = String(text);
+      return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
+    }
+
+    // Filtering
+    filterSeverity.addEventListener('change', applyFilters);
+    filterMerged.addEventListener('change', applyFilters);
+
+    function applyFilters() {
+      const severityFilter = filterSeverity.value;
+      const mergedFilter = filterMerged.value;
+
+      filteredData = allData.filter(row => {
+        const matchSeverity = severityFilter === 'all' || row.severity === severityFilter;
+        const matchMerged = mergedFilter === 'all' || row.merged === mergedFilter;
+        return matchSeverity && matchMerged;
+      });
+
+      updateStats();
+      renderTable();
+    }
+
+    // Export functionality
+    exportBtn.addEventListener('click', () => {
+      if (filteredData.length === 0) return;
+
+      const ws = XLSX.utils.json_to_sheet(filteredData.map(row => ({
+        'Repository': row.repo,
+        'Package': row.package,
+        'Ecosystem': row.ecosystem,
+        'Severity': row.severity,
+        'Priority': row.priority,
+        'PR #': row.prNumber,
+        'PR URL': row.prUrl,
+        'Merged?': row.merged,
+        'Merged Date': row.mergedDate,
+        'Notes': row.notes
+      })));
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Filtered Alerts');
+      XLSX.writeFile(wb, 'dependabot-alerts-filtered.xlsx');
+    });
+  </script>
+</body>
+</html>
