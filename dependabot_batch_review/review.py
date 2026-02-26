@@ -3,8 +3,8 @@ from pathlib import Path
 from typing import Optional, TextIO, Union
 
 from blessings import Terminal  # type: ignore
-from bs4 import BeautifulSoup, PageElement
-from openpyxl import load_workbook
+from bs4 import BeautifulSoup, PageElement, Tag
+from openpyxl import load_workbook  # type: ignore[import-untyped]
 from dataclasses import dataclass
 from enum import Enum
 import re
@@ -20,17 +20,22 @@ class OutputWriter:
         self._file_handle: Optional[TextIO] = None
         self._t = Terminal()
 
-    def __enter__(self):
+    def __enter__(self) -> "OutputWriter":
         if self._output_file_path:
             self._output_file_path.parent.mkdir(parents=True, exist_ok=True)
             self._file_handle = open(self._output_file_path, "w", encoding="utf-8")
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self,
+        exc_type: Union[type, None],
+        exc_val: Union[BaseException, None],
+        exc_tb: Union[object, None],
+    ) -> None:
         if self._file_handle:
             self._file_handle.close()
 
-    def write(self, content: str, bold: bool = False):
+    def write(self, content: str, bold: bool = False) -> None:
         if self._file_handle:
             self._file_handle.write(content)
             self._file_handle.write("\n")
@@ -41,22 +46,22 @@ class OutputWriter:
                 sys.stdout.write(content)
             sys.stdout.write("\n")
 
-    def write_heading(self, level: int, text: str):
+    def write_heading(self, level: int, text: str) -> None:
         if self._file_handle:
-            self._file_handle.write(f"{{'#' * level}} {{text}}\n\n")
+            self._file_handle.write(f"{'#' * level} {text}\n\n")
         else:
             self.write(text, bold=True)
 
-    def write_list_item(self, text: str, indent_level: int = 0):
+    def write_list_item(self, text: str, indent_level: int = 0) -> None:
         prefix = "  " * indent_level + "- "
         if self._file_handle:
             self._file_handle.write(f"{prefix}{{text}}\n")
         else:
             self.write(f"{prefix}{{text}}")
 
-    def write_code_block(self, code: str, lang: str = ""):
+    def write_code_block(self, code: str, lang: str = "") -> None:
         if self._file_handle:
-            self._file_handle.write(f"```\n{{lang}}\n{{code}}\n```\n")
+            self._file_handle.write(f"```\n{lang}\n{code}\n```\n")
         else:
             self.write(code)
 
@@ -135,7 +140,7 @@ def analyze_risk(pr: DependencyUpdatePR) -> RiskAssessment:
             ):
                 level = "High"
                 reasons.append(
-                    f"Major version bump from {{u.from_version}} to {{u.to_version}}"
+                    f"Major version bump from {u.from_version} to {u.to_version}"
                 )
                 break
 
@@ -189,16 +194,16 @@ def _extract_ghsa_details(
     details_element = soup.find(
         "details", id=lambda x: x and x.startswith("ghsa-details-")
     )
-    if details_element:
+    if isinstance(details_element, Tag):
         ghsa_id_element = details_element.find(
             "a", href=lambda x: x and "github.com/advisories" in x
         )
-        if ghsa_id_element:
+        if isinstance(ghsa_id_element, Tag):
             ghsa_id = ghsa_id_element.text.strip()
-            advisory_url = ghsa_id_element["href"]
+            advisory_url = str(ghsa_id_element["href"])
 
         summary_element = details_element.find("summary")
-        if summary_element:
+        if isinstance(summary_element, Tag):
             advisory_summary = summary_element.text.strip()
 
     return ghsa_id, advisory_summary, advisory_url
@@ -292,7 +297,7 @@ def parse_package_type_from_branch_name(branch: str) -> str:
     branch_name_re = r"^dependabot/([^/]+)/.*"
     branch_name_match = re.search(branch_name_re, branch)
     if not branch_name_match:
-        raise ValueError(f"Failed to parse branch name '{{branch}}'")
+        raise ValueError(f"Failed to parse branch name '{branch}'")
     package_type = branch_name_match.groups()[0]
     return package_type
 
@@ -363,9 +368,7 @@ def fetch_dependency_prs(
             )  # This will now return None, None, None
 
         except ValueError as exc:
-            print(
-                f"Failed to parse details from {{pr['url']}}: {{exc}}", file=sys.stderr
-            )
+            print(f"Failed to parse details from {pr['url']}: {exc}", file=sys.stderr)
             continue
 
         rollup_state = status_check_rollup["state"] if status_check_rollup else None
@@ -483,7 +486,7 @@ def generate_xlsx_report(
     workbook = load_workbook(template_path)
     if "Alerts" not in workbook.sheetnames:
         raise ValueError(
-            f"Template '{{template_path}}' does not contain an 'Alerts' sheet."
+            f"Template '{template_path}' does not contain an 'Alerts' sheet."
         )
 
     sheet = workbook["Alerts"]
@@ -501,7 +504,7 @@ def generate_xlsx_report(
         risk = analyze_risk(pr)
         priority = map_risk_to_priority(risk.level)
 
-        row_values = [None] * len(header)
+        row_values: list[Union[str, int, None]] = [None] * len(header)
 
         row_values[col_map["Repo"]] = full_repo_name
         row_values[col_map["GHSA"]] = pr.ghsa_id
