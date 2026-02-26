@@ -280,12 +280,18 @@
           <div class="table-header">
             <h2 class="table-title">Dependabot Alerts</h2>
             <div class="table-actions">
-              <select class="filter-select" id="filterSeverity"><option value="all">All Severities</option><option value="High">High</option><option value="Medium">Medium</option><option value="Low">Low</option></select>
+              <div class="multi-select" id="dashSeverityFilter">
+                <button class="multi-select-btn" type="button">All Severities <span class="material-icons arrow">expand_more</span></button>
+                <div class="multi-select-dropdown" id="dashSeverityDropdown"></div>
+              </div>
               <div class="multi-select" id="dashReviewerFilter">
                 <button class="multi-select-btn" type="button">All Reviewers <span class="material-icons arrow">expand_more</span></button>
                 <div class="multi-select-dropdown" id="dashReviewerDropdown"></div>
               </div>
-              <select class="filter-select" id="filterMerged"><option value="all">All Status</option><option value="No">Not Merged</option><option value="Yes">Merged</option></select>
+              <div class="multi-select" id="dashStatusFilter">
+                <button class="multi-select-btn" type="button">All Status <span class="material-icons arrow">expand_more</span></button>
+                <div class="multi-select-dropdown" id="dashStatusDropdown"></div>
+              </div>
               <button class="btn-secondary" id="exportBtn" disabled><span class="material-icons" style="font-size:18px">download</span> Export</button>
             </div>
           </div>
@@ -316,12 +322,18 @@
             <h2 class="table-title">Vulnerability Groups</h2>
             <div class="table-actions">
               <input type="text" class="search-input" id="alertSearch" placeholder="Search packages...">
-              <select class="filter-select" id="alertFilterSeverity"><option value="all">All Severities</option><option value="High">High</option><option value="Medium">Medium</option><option value="Low">Low</option><option value="CRITICAL">Critical</option></select>
+              <div class="multi-select" id="alertSeverityFilter">
+                <button class="multi-select-btn" type="button">All Severities <span class="material-icons arrow">expand_more</span></button>
+                <div class="multi-select-dropdown" id="alertSeverityDropdown"></div>
+              </div>
               <div class="multi-select" id="alertReviewerFilter">
                 <button class="multi-select-btn" type="button">All Reviewers <span class="material-icons arrow">expand_more</span></button>
                 <div class="multi-select-dropdown" id="alertReviewerDropdown"></div>
               </div>
-              <select class="filter-select" id="alertFilterPatched"><option value="all">All</option><option value="unpatched">Unpatched (Todo)</option><option value="patched">Patched</option></select>
+              <div class="multi-select" id="alertPatchedFilter">
+                <button class="multi-select-btn" type="button">All Patched <span class="material-icons arrow">expand_more</span></button>
+                <div class="multi-select-dropdown" id="alertPatchedDropdown"></div>
+              </div>
               <button class="btn-secondary" id="exportGroupedBtn" disabled><span class="material-icons" style="font-size:18px">download</span> Export</button>
             </div>
           </div>
@@ -405,12 +417,12 @@
     const $$ = s => document.querySelectorAll(s);
 
     const fileInput = $('#fileInput'), uploadArea = $('#uploadArea'), fileName = $('#fileName');
-    const tableBody = $('#tableBody'), filterSeverity = $('#filterSeverity'), filterMerged = $('#filterMerged');
+    const tableBody = $('#tableBody');
     const exportBtn = $('#exportBtn'), syncBtn = $('#syncBtn');
     const statTotal = $('#statTotal'), statHigh = $('#statHigh'), statMedium = $('#statMedium'), statLow = $('#statLow');
 
     const groupedTableBody = $('#groupedTableBody');
-    const alertSearch = $('#alertSearch'), alertFilterSeverity = $('#alertFilterSeverity'), alertFilterPatched = $('#alertFilterPatched');
+    const alertSearch = $('#alertSearch');
     const exportGroupedBtn = $('#exportGroupedBtn');
     const alertStatTotal = $('#alertStatTotal'), alertStatPatched = $('#alertStatPatched');
     const alertStatUnpatched = $('#alertStatUnpatched'), alertStatCritical = $('#alertStatCritical');
@@ -556,7 +568,9 @@
 
     function onDataLoaded() {
       filteredData = [...allData];
+      populateSeverityFilters();
       populateReviewerFilters();
+      populateStatusFilters();
       updateStats();
       renderTable();
       buildVulnGroups();
@@ -775,13 +789,13 @@
       renderGroupedTable();
     });
 
-    filterSeverity.addEventListener('change', applyDashFilters);
-    filterMerged.addEventListener('change', applyDashFilters);
     function applyDashFilters() {
-      const s = filterSeverity.value, m = filterMerged.value;
-      const selReviewers = getSelectedReviewers('dashReviewerDropdown');
+      const selSev = getSelectedValues('dashSeverityDropdown');
+      const selReviewers = getSelectedValues('dashReviewerDropdown');
+      const selStatus = getSelectedValues('dashStatusDropdown');
       filteredData = allData.filter(r =>
-        (s === 'all' || r.severity === s) && (m === 'all' || r.merged === m) &&
+        (selSev.length === 0 || selSev.includes(r.severity)) &&
+        (selStatus.length === 0 || selStatus.includes(r.merged)) &&
         (selReviewers.length === 0 || (r.reviewers || []).some(rv => selReviewers.includes(rv)))
       );
       dashPage = 1;
@@ -789,7 +803,14 @@
       renderTable();
     }
 
-    /* ===== REVIEWER MULTI-SELECT ===== */
+    /* ===== MULTI-SELECT FILTERS ===== */
+    function getAllSeverities() {
+      const order = ['CRITICAL', 'High', 'Medium', 'Low'];
+      const seen = new Set();
+      for (const r of allData) { if (r.severity) seen.add(r.severity); }
+      return order.filter(s => seen.has(s));
+    }
+
     function getAllReviewers() {
       const seen = new Set();
       for (const r of allData) {
@@ -798,24 +819,36 @@
       return [...seen].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
     }
 
-    function populateReviewerFilters() {
-      const reviewers = getAllReviewers();
-      populateDropdown('dashReviewerDropdown', reviewers, () => { applyDashFilters(); });
-      populateDropdown('alertReviewerDropdown', reviewers, () => { alertsPage = 1; renderGroupedTable(); });
+    function populateSeverityFilters() {
+      const sevs = getAllSeverities();
+      populateDropdown('dashSeverityDropdown', sevs, 'All Severities', () => { applyDashFilters(); });
+      populateDropdown('alertSeverityDropdown', sevs, 'All Severities', () => { alertsPage = 1; renderGroupedTable(); });
     }
 
-    function populateDropdown(containerId, reviewers, onChange) {
+    function populateReviewerFilters() {
+      const reviewers = getAllReviewers();
+      populateDropdown('dashReviewerDropdown', reviewers, 'All Reviewers', () => { applyDashFilters(); });
+      populateDropdown('alertReviewerDropdown', reviewers, 'All Reviewers', () => { alertsPage = 1; renderGroupedTable(); });
+    }
+
+    function populateStatusFilters() {
+      populateDropdown('dashStatusDropdown', ['Yes', 'No'], 'All Status', () => { applyDashFilters(); });
+      populateDropdown('alertPatchedDropdown', ['Unpatched (Todo)', 'Patched'], 'All Patched', () => { alertsPage = 1; renderGroupedTable(); });
+    }
+
+    function populateDropdown(containerId, items, allLabel, onChange) {
       const container = document.getElementById(containerId);
-      if (!reviewers.length) {
-        container.innerHTML = '<div class="ms-empty">No reviewers found</div>';
+      if (!items.length) {
+        container.innerHTML = '<div class="ms-empty">No options found</div>';
         return;
       }
       let html = '';
-      for (const rv of reviewers) {
-        html += '<label><input type="checkbox" value="' + esc(rv) + '"> ' + esc(rv) + '</label>';
+      for (const item of items) {
+        html += '<label><input type="checkbox" value="' + esc(item) + '"> ' + esc(item) + '</label>';
       }
       html += '<span class="ms-clear">Clear all</span>';
       container.innerHTML = html;
+      container.dataset.allLabel = allLabel;
       container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
         cb.addEventListener('change', () => { updateMultiSelectLabel(containerId); onChange(); });
       });
@@ -826,7 +859,7 @@
       });
     }
 
-    function getSelectedReviewers(containerId) {
+    function getSelectedValues(containerId) {
       const container = document.getElementById(containerId);
       return [...container.querySelectorAll('input[type="checkbox"]:checked')].map(cb => cb.value);
     }
@@ -834,11 +867,12 @@
     function updateMultiSelectLabel(containerId) {
       const container = document.getElementById(containerId);
       const btn = container.parentElement.querySelector('.multi-select-btn');
-      const sel = getSelectedReviewers(containerId);
+      const sel = getSelectedValues(containerId);
+      const allLabel = container.dataset.allLabel || 'All';
       if (sel.length === 0) {
-        btn.innerHTML = 'All Reviewers <span class="material-icons arrow">expand_more</span>';
+        btn.innerHTML = allLabel + ' <span class="material-icons arrow">expand_more</span>';
       } else {
-        btn.innerHTML = esc(sel.length === 1 ? sel[0] : sel.length + ' reviewers') +
+        btn.innerHTML = esc(sel.length === 1 ? sel[0] : sel.length + ' selected') +
           ' <span class="filter-count">' + sel.length + '</span>' +
           ' <span class="material-icons arrow">expand_more</span>';
       }
@@ -888,14 +922,16 @@
 
     function getFilteredGroups() {
       const s = alertSearch.value.toLowerCase();
-      const sv = alertFilterSeverity.value;
-      const p = alertFilterPatched.value;
-      const selReviewers = getSelectedReviewers('alertReviewerDropdown');
+      const selSev = getSelectedValues('alertSeverityDropdown');
+      const selPatched = getSelectedValues('alertPatchedDropdown');
+      const selReviewers = getSelectedValues('alertReviewerDropdown');
       return vulnGroups.filter(g => {
         if (s && !g.package.toLowerCase().includes(s) && !(g.advisorySummary || '').toLowerCase().includes(s)) return false;
-        if (sv !== 'all' && g.severity !== sv) return false;
-        if (p === 'patched' && !g.patched) return false;
-        if (p === 'unpatched' && g.patched) return false;
+        if (selSev.length > 0 && !selSev.includes(g.severity)) return false;
+        if (selPatched.length > 0) {
+          const label = g.patched ? 'Patched' : 'Unpatched (Todo)';
+          if (!selPatched.includes(label)) return false;
+        }
         if (selReviewers.length > 0) {
           const gr = collectReviewers(g.repos);
           if (!gr.some(rv => selReviewers.includes(rv))) return false;
@@ -990,8 +1026,7 @@
     };
 
     alertSearch.addEventListener('input', () => { alertsPage = 1; renderGroupedTable(); });
-    alertFilterSeverity.addEventListener('change', () => { alertsPage = 1; renderGroupedTable(); });
-    alertFilterPatched.addEventListener('change', () => { alertsPage = 1; renderGroupedTable(); });
+
 
     /* ===== FILE UPLOAD ===== */
     fileInput.addEventListener('change', e => { if (e.target.files[0]) handleFile(e.target.files[0]); });
