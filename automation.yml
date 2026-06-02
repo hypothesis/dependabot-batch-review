@@ -1,0 +1,51 @@
+# Configuration for the autonomous Dependabot auto-merger.
+# Loaded by dependabot_batch_review.automerge / bulk / monitor.
+# Environment variables override these (env always wins). dry_run is fail-safe:
+# only DBR_DRY_RUN=false (or false/0/no here) ever enables real merges.
+
+organization: hypothesis
+
+# Only auto-merge PRs at least this many days old (gives humans a window).
+min_age_days: 3
+
+# SAFE DEFAULT. Set to false (or pass --no-dry-run / DBR_DRY_RUN=false) to merge.
+dry_run: true
+
+# Phase 1 starts with Tier 0 only (non-deploying bumps). Add 1 once the Sentry /
+# New Relic health gate is provisioned and piloted.
+tiers_enabled: [0]
+
+# Hard cap on merges per run (excess is reported as skipped).
+max_merges_per_run: 10
+
+# Slack channel id for digests / alerts (or set SLACK_CHANNEL).
+slack_channel: null
+
+labels: [dependencies]
+
+repo_allow: [] # empty = all org repos
+repo_deny:
+  - workflows # shared reusable workflows — change with care
+  - cookiecutters
+  - deployment
+
+# npm-publishing frontend libs (no EB deploy.yml) whose npm bumps still ship.
+publish_on_merge_repos:
+  - client
+  - frontend-shared
+
+health:
+  sentry_org: hypothesis
+  # repo -> Sentry project slug (defaults to the repo name when omitted)
+  sentry_projects: {}
+  # repo -> New Relic appName (defaults to "<repo> (prod)" when omitted)
+  newrelic_apps: {}
+  deploy_wait_timeout_s: 1800 # wait up to 30 min for the EB deploy to settle
+  deploy_poll_interval_s: 20
+  health_window_min: 15 # sample 15 min of post-deploy health
+  baseline_window_min: 60 # compare against the prior 60 min
+  thresholds:
+    error_delta_pct: 50.0 # fail if post-deploy error rate is >50% above baseline
+    min_crash_free_pct: 99.0 # fail if Sentry crash-free sessions drop below this
+    new_issue_fail_count: 1 # fail on >=1 brand-new unresolved Sentry issue
+    nr_error_count_abs: 5 # cold-start guard when baseline traffic is ~0

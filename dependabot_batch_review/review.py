@@ -111,6 +111,14 @@ class DependencyUpdatePR:
     advisory_summary: Optional[str] = None
     advisory_url: Optional[str] = None
     reviewers: list[str] = dataclass_field(default_factory=list)
+    # Fields used by the autonomous auto-merge layer (automerge/risk/health).
+    # All optional with defaults so existing call sites are unaffected.
+    created_at: Optional[str] = None
+    merge_state_status: Optional[str] = None
+    mergeable: Optional[str] = None
+    head_ref_name: Optional[str] = None
+    number: Optional[int] = None
+    repo: Optional[str] = None
 
 
 @dataclass
@@ -322,10 +330,13 @@ def fetch_dependency_prs(
 
             author { login }
             id
+            number
             title
             bodyHTML
             headRefName
             reviewDecision
+            createdAt
+            mergeable
             url
 
             assignees(first: 10) {
@@ -357,6 +368,10 @@ def fetch_dependency_prs(
 
     label_terms = " ".join(f"label:{label}" for label in labels)
     query = f"org:{organization} {label_terms} is:pr is:open author:app/dependabot"
+    # NB: we intentionally do not request `mergeStateStatus` here. It is a preview
+    # field that 502s when computed for ~100 PRs org-wide in one search; `mergeable`
+    # (GA) is enough to detect conflicts, and a blocked/behind PR simply fails the
+    # merge attempt, which the engine catches and skips.
     result = gh.query(query=dependencies_query, variables={"query": query})
     pull_requests = result["search"]["nodes"]
 
@@ -411,6 +426,12 @@ def fetch_dependency_prs(
                 advisory_summary=advisory_summary,
                 advisory_url=advisory_url,
                 reviewers=_extract_reviewers(pr),
+                created_at=pr.get("createdAt"),
+                merge_state_status=pr.get("mergeStateStatus"),
+                mergeable=pr.get("mergeable"),
+                head_ref_name=pr.get("headRefName"),
+                number=pr.get("number"),
+                repo=pr["repository"]["name"],
             )
         )
 

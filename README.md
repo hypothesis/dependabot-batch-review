@@ -180,3 +180,51 @@ Start the local web dashboard to browse, group, and manage alerts interactively:
 ```
 
 Then open <http://localhost:8081> in your browser.
+
+## Autonomous auto-merge
+
+On top of the human-in-the-loop review tools above, the package includes an
+**autonomous layer** that merges safe Dependabot PRs on a schedule, verifies
+production health after deploying, and rolls back automatically when a deploy
+degrades. See [`dependabot-automation-plan.md`](./dependabot-automation-plan.md)
+for the design and findings.
+
+Everything defaults to **dry-run** — nothing merges until you set `dry_run: false`
+(or pass `--no-dry-run` / `DBR_DRY_RUN=false`) **and** provision a merge-capable
+token. Configure it in [`automation.yml`](./automation.yml).
+
+### Risk tiers
+
+| Tier | What | Action |
+|---|---|---|
+| 0 | Bumps that never deploy to prod (dev/tooling, lockfiles, non-prod patches) | auto-merge on CI pass |
+| 1 | Patch/minor **production** deps that deploy | auto-merge, then Sentry + New Relic health gate; auto-rollback on failure |
+| 2 | Major bumps, security-sensitive runtime libs, CI-failing, conflicted | escalate to humans (Slack digest + Claude triage) |
+
+### Commands
+
+```sh
+# Daily auto-merger (dry-run by default — prints would-merge / escalate / skip)
+poetry run python -m dependabot_batch_review.automerge hypothesis
+
+# Burn down the whole backlog in waves (Tier 0 first)
+poetry run python -m dependabot_batch_review.bulk hypothesis --dry-run --tier 0
+
+# Local curses monitor of the sweep
+poetry run python -m dependabot_batch_review.monitor hypothesis
+```
+
+The daily run ships as a GitHub Action in
+[`.github/workflows/automerge.yml`](./.github/workflows/automerge.yml)
+(`schedule` + manual `workflow_dispatch`). **Note:** merges must use a GitHub App /
+fine-grained PAT (`DEPENDABOT_AUTOMERGE_TOKEN`), not the default `GITHUB_TOKEN` —
+a push by the default token does not re-trigger the deploy workflows.
+
+### Configuration & secrets
+
+`min_age_days` (default 3), `tiers_enabled`, repo allow/deny, and health
+thresholds live in `automation.yml`; env vars override them (`DBR_DRY_RUN`,
+`DBR_TIERS_ENABLED`, `DBR_MIN_AGE_DAYS`, …). Live Tier-1 health-gating needs
+`SENTRY_AUTH_TOKEN`/`SENTRY_ORG`, `NEW_RELIC_API_KEY`/`NEW_RELIC_ACCOUNT_ID`,
+`ANTHROPIC_API_KEY` (Claude triage — optional, degrades gracefully), and
+`SLACK_TOKEN`/`SLACK_CHANNEL`.
