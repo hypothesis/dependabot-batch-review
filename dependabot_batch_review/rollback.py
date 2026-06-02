@@ -12,6 +12,7 @@ all the reads but performs no branch push / PR creation / merge.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -19,6 +20,14 @@ from typing import Any
 
 from .github_client import GitHubClient
 from .review import merge_pr
+
+# Matches the credential in an authenticated clone URL so it never reaches logs.
+_TOKEN_RE = re.compile(r"x-access-token:[^@/\s]+@")
+
+
+def _redact(text: str) -> str:
+    return _TOKEN_RE.sub("x-access-token:***@", text)
+
 
 _REPO_QUERY = """
 query($owner: String!, $name: String!, $branch: String!) {
@@ -51,7 +60,11 @@ class RollbackResult:
 def _run(cmd: list[str], cwd: str) -> str:
     result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     if result.returncode != 0:
-        raise RuntimeError(f"`{' '.join(cmd)}` failed: {result.stderr.strip()}")
+        # Redact the embedded clone token from both the command and stderr so it
+        # can't leak into exception messages / logs / Slack on the fallback path.
+        command = _redact(" ".join(cmd))
+        stderr = _redact(result.stderr.strip())
+        raise RuntimeError(f"`{command}` failed: {stderr}")
     return result.stdout.strip()
 
 

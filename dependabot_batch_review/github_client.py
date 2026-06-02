@@ -23,22 +23,25 @@ class GitHubClient:
     def query(
         self,
         query: str,
-        variables: dict[str, Any] = {},
-        extra_headers: dict[str, str] = {},
+        variables: dict[str, Any] | None = None,
+        extra_headers: dict[str, str] | None = None,
     ) -> Any:
-        data = {"query": query, "variables": variables}
+        data = {"query": query, "variables": variables or {}}
         headers = {"Authorization": f"Bearer {self.token}"}
-        headers.update(extra_headers)
+        if extra_headers:
+            headers.update(extra_headers)
 
         # GitHub's GraphQL endpoint intermittently returns transient 5xx / HTML
         # (e.g. a 502 when a heavy `bodyHTML` search times out). Retry those with
-        # backoff so the daily automation doesn't fall over on a blip.
+        # backoff so the daily automation doesn't fall over on a blip. A request
+        # timeout ensures a hung connection can't stall a scheduled run forever.
         last_error = "unknown error"
         for attempt in range(4):
             result = requests.post(
                 url=self.endpoint,
                 headers=headers,
                 data=json.dumps(data),
+                timeout=30,
             )
             if result.status_code >= 500:
                 last_error = f"HTTP {result.status_code}"

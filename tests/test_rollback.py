@@ -1,7 +1,9 @@
 from types import SimpleNamespace
 
+import pytest
+
 from dependabot_batch_review import rollback
-from dependabot_batch_review.rollback import revert_merge
+from dependabot_batch_review.rollback import _redact, _run, revert_merge
 
 
 class FakeGH:
@@ -87,3 +89,32 @@ def test_revert_handles_git_failure(monkeypatch):
     result = revert_merge(FakeGH(), "hypothesis", "bouncer", "abc1234")
     assert result.performed is False
     assert "git revert -m 1" in result.reason  # manual fallback instructions
+
+
+def test_redact_strips_clone_token():
+    url = "https://x-access-token:ghp_SECRET123@github.com/hypothesis/bouncer.git"
+    redacted = _redact(f"git clone {url} .")
+    assert "ghp_SECRET123" not in redacted
+    assert "x-access-token:***@" in redacted
+
+
+def test_run_error_does_not_leak_token(monkeypatch):
+    def failing_run(cmd, cwd=None, capture_output=True, text=True):
+        return SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr="fatal: https://x-access-token:ghp_SECRET@github.com/x/y.git denied",
+        )
+
+    monkeypatch.setattr(rollback.subprocess, "run", failing_run)
+    with pytest.raises(RuntimeError) as excinfo:
+        _run(
+            [
+                "git",
+                "clone",
+                "https://x-access-token:ghp_SECRET@github.com/x/y.git",
+                ".",
+            ],
+            "/tmp",
+        )
+    assert "ghp_SECRET" not in str(excinfo.value)
