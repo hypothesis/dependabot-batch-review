@@ -1,0 +1,1173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dependabot Review</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <style>
+    :root {
+      --background: #111111;
+      --foreground: #FFFFFF;
+      --card: #1A1A1A;
+      --card-foreground: #FFFFFF;
+      --muted: #2E2E2E;
+      --muted-foreground: #B8B9B6;
+      --border: #2E2E2E;
+      --primary: #FF8400;
+      --primary-foreground: #111111;
+      --secondary: #2E2E2E;
+      --secondary-foreground: #FFFFFF;
+      --sidebar: #18181b;
+      --sidebar-accent: #2a2a30;
+      --sidebar-foreground: #fafafa;
+      --sidebar-border: rgba(255, 255, 255, 0.1);
+      --color-success-foreground: #B6FFCE;
+      --color-error-foreground: #FF5C33;
+      --color-warning-foreground: #FF8400;
+      --font-primary: 'JetBrains Mono', monospace;
+      --font-secondary: 'Geist', sans-serif;
+      --radius-m: 16px;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: var(--font-secondary); background-color: var(--background); color: var(--foreground); min-height: 100vh; }
+    .dashboard { display: flex; height: 100vh; width: 100%; }
+
+    /* Sidebar */
+    .sidebar { width: 240px; background-color: var(--sidebar); border-right: 1px solid var(--sidebar-border); display: flex; flex-direction: column; padding: 16px 12px; flex-shrink: 0; }
+    .sidebar-logo { display: flex; align-items: center; gap: 8px; padding: 8px 12px; margin-bottom: 24px; }
+    .sidebar-logo-icon { width: 24px; height: 24px; object-fit: contain; }
+    .sidebar-logo-text { font-family: var(--font-primary); font-size: 14px; font-weight: 700; color: var(--sidebar-foreground); text-transform: uppercase; letter-spacing: 1px; }
+    .sidebar-nav { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+    .nav-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 8px; color: var(--muted-foreground); text-decoration: none; font-size: 14px; font-weight: 500; transition: all 0.2s ease; cursor: pointer; }
+    .nav-item:hover { background-color: var(--sidebar-accent); color: var(--sidebar-foreground); }
+    .nav-item.active { background-color: var(--sidebar-accent); color: var(--sidebar-foreground); }
+    .nav-item.disabled { opacity: 0.35; pointer-events: none; }
+    .nav-item .material-icons { font-size: 20px; }
+    .sidebar-footer { padding: 16px 12px; border-top: 1px solid var(--sidebar-border); margin-top: auto; }
+    .user-info { display: flex; flex-direction: column; gap: 2px; }
+    .user-name { font-size: 14px; font-weight: 500; color: var(--sidebar-foreground); }
+    .user-email { font-size: 12px; color: var(--muted-foreground); }
+
+    /* Main */
+    .main-content { flex: 1; padding: 40px; display: flex; flex-direction: column; gap: 32px; overflow-y: auto; background-color: var(--background); }
+    .tab-content { display: none; flex-direction: column; gap: 32px; }
+    .tab-content.active { display: flex; }
+
+    /* Header */
+    .page-header { display: flex; flex-direction: column; gap: 16px; }
+    .page-title { font-family: var(--font-primary); font-size: 32px; font-weight: 700; color: var(--foreground); line-height: 1.2; }
+    .page-subtitle { font-size: 14px; color: var(--muted-foreground); line-height: 1.5; }
+
+    /* Upload / Sync */
+    .upload-section { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+    .upload-area { display: flex; align-items: center; gap: 12px; padding: 16px 24px; background-color: var(--card); border: 2px dashed var(--border); border-radius: var(--radius-m); cursor: pointer; transition: all 0.2s ease; }
+    .upload-area:hover { border-color: var(--primary); background-color: var(--muted); }
+    .upload-area.dragover { border-color: var(--primary); background-color: var(--muted); }
+    .upload-area .material-icons { font-size: 24px; color: var(--primary); }
+    .upload-text { font-size: 14px; color: var(--muted-foreground); }
+    .upload-text strong { color: var(--primary); }
+    .file-input { display: none; }
+    .file-name { font-size: 14px; color: var(--color-success-foreground); display: flex; align-items: center; gap: 8px; }
+
+    /* Buttons */
+    .btn-primary { display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px; background-color: var(--primary); color: var(--primary-foreground); border: none; border-radius: 8px; font-family: var(--font-secondary); font-size: 14px; font-weight: 500; cursor: pointer; transition: opacity 0.2s ease; }
+    .btn-primary:hover { opacity: 0.9; }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-secondary { display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px; background-color: var(--secondary); color: var(--secondary-foreground); border: 1px solid var(--border); border-radius: 8px; font-family: var(--font-secondary); font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s ease; }
+    .btn-secondary:hover { background-color: var(--muted); }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinning .material-icons { animation: spin 1s linear infinite; }
+
+    /* Stats */
+    .stats-grid { display: flex; gap: 24px; flex-wrap: wrap; }
+    .stat-card { flex: 1; min-width: 160px; background-color: var(--card); border: 1px solid var(--border); border-radius: var(--radius-m); padding: 24px; display: flex; flex-direction: column; gap: 8px; }
+    .stat-label { font-size: 12px; color: var(--muted-foreground); line-height: 1.5; }
+    .stat-value { font-family: var(--font-primary); font-size: 36px; font-weight: 700; line-height: 1; }
+    .stat-value.default { color: var(--foreground); }
+    .stat-value.success { color: var(--color-success-foreground); }
+    .stat-value.error { color: var(--color-error-foreground); }
+    .stat-value.warning { color: var(--color-warning-foreground); }
+
+    /* Labels */
+    .risk-label { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; }
+    .risk-low { color: var(--color-success-foreground); background-color: rgba(182,255,206,0.1); }
+    .risk-medium { color: var(--color-warning-foreground); background-color: rgba(255,132,0,0.1); }
+    .risk-high { color: var(--color-error-foreground); background-color: rgba(255,92,51,0.1); }
+    .risk-critical { color: #FF3333; background-color: rgba(255,51,51,0.12); }
+    .priority-label { display: inline-block; padding: 4px 8px; border-radius: 4px; font-family: var(--font-primary); font-size: 12px; font-weight: 600; }
+    .priority-p1 { color: var(--color-error-foreground); background-color: rgba(255,92,51,0.15); }
+    .priority-p2 { color: var(--color-warning-foreground); background-color: rgba(255,132,0,0.15); }
+    .priority-p3 { color: var(--color-success-foreground); background-color: rgba(182,255,206,0.15); }
+
+    /* Table */
+    .table-section { display: flex; flex-direction: column; gap: 16px; }
+    .table-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+    .table-title { font-family: var(--font-primary); font-size: 20px; font-weight: 600; color: var(--foreground); }
+    .table-actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .filter-select { padding: 8px 12px; background-color: var(--card); border: 1px solid var(--border); border-radius: 8px; color: var(--foreground); font-family: var(--font-secondary); font-size: 14px; cursor: pointer; }
+    .search-input { padding: 8px 12px; background-color: var(--card); border: 1px solid var(--border); border-radius: 8px; color: var(--foreground); font-family: var(--font-secondary); font-size: 14px; width: 200px; outline: none; }
+    .search-input::placeholder { color: var(--muted-foreground); }
+    .search-input:focus { border-color: var(--primary); }
+
+    /* Multi-select reviewer dropdown */
+    .multi-select { position: relative; display: inline-block; }
+    .multi-select-btn { padding: 8px 12px; background-color: var(--card); border: 1px solid var(--border); border-radius: 8px; color: var(--foreground); font-family: var(--font-secondary); font-size: 14px; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; min-width: 140px; }
+    .multi-select-btn:hover { border-color: var(--primary); }
+    .multi-select-btn .arrow { font-size: 18px; margin-left: auto; }
+    .multi-select-btn .filter-count { background: var(--primary); color: #fff; border-radius: 10px; font-size: 11px; padding: 1px 6px; margin-left: 4px; }
+    .multi-select-dropdown { display: none; position: absolute; top: 100%; left: 0; margin-top: 4px; min-width: 200px; max-height: 260px; overflow-y: auto; background: var(--card); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); z-index: 100; padding: 6px 0; }
+    .multi-select-dropdown.open { display: block; }
+    .multi-select-dropdown label { display: flex; align-items: center; gap: 8px; padding: 6px 12px; cursor: pointer; font-size: 13px; color: var(--foreground); }
+    .multi-select-dropdown label:hover { background: var(--muted); }
+    .multi-select-dropdown input[type="checkbox"] { accent-color: var(--primary); }
+    .multi-select-dropdown .ms-clear { display: block; padding: 6px 12px; font-size: 12px; color: var(--muted-foreground); cursor: pointer; border-top: 1px solid var(--border); margin-top: 4px; }
+    .multi-select-dropdown .ms-clear:hover { color: var(--primary); }
+    .multi-select-dropdown .ms-empty { padding: 12px; font-size: 13px; color: var(--muted-foreground); text-align: center; }
+    .data-table { width: 100%; background-color: var(--card); border: 1px solid var(--border); border-radius: var(--radius-m); overflow: hidden; }
+    .data-table table { width: 100%; border-collapse: collapse; }
+    .data-table th, .data-table td { padding: 14px 16px; text-align: left; border-bottom: 1px solid var(--border); }
+    .data-table th { font-size: 12px; font-weight: 600; color: var(--muted-foreground); background-color: var(--muted); cursor: pointer; user-select: none; white-space: nowrap; }
+    .data-table th:hover { color: var(--foreground); }
+    .data-table th .sort-arrow { font-size: 14px; vertical-align: middle; margin-left: 2px; opacity: 0.3; }
+    .data-table th.sort-active .sort-arrow { opacity: 1; color: var(--primary); }
+    .data-table td { font-size: 14px; color: var(--foreground); }
+    .data-table tr:last-child td { border-bottom: none; }
+    .data-table tr:hover td { background-color: var(--muted); }
+    .status-passed { color: var(--color-success-foreground); font-weight: 500; }
+    .status-failed { color: var(--color-error-foreground); font-weight: 500; }
+    .status-pending { color: var(--color-warning-foreground); font-weight: 500; }
+    .link { color: var(--primary); text-decoration: none; }
+    .link:hover { text-decoration: underline; }
+
+    /* Empty */
+    .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 64px 32px; text-align: center; color: var(--muted-foreground); }
+    .empty-state .material-icons { font-size: 48px; margin-bottom: 16px; opacity: 0.5; }
+    .empty-state h3 { font-size: 18px; margin-bottom: 8px; color: var(--foreground); }
+    .empty-state p { font-size: 14px; }
+
+    /* Scroll */
+    .table-container { max-height: 600px; overflow-y: auto; }
+    .table-container::-webkit-scrollbar { width: 8px; }
+    .table-container::-webkit-scrollbar-track { background: var(--muted); border-radius: 4px; }
+    .table-container::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+    .table-container::-webkit-scrollbar-thumb:hover { background: var(--muted-foreground); }
+
+    /* Accordion */
+    .accordion-header { cursor: pointer; user-select: none; }
+    .accordion-header:hover td { background-color: var(--muted) !important; }
+    .accordion-header td:first-child { display: flex; align-items: center; gap: 8px; }
+    .accordion-chevron { display: inline-flex; transition: transform 0.2s ease; font-size: 18px !important; color: var(--muted-foreground); }
+    .accordion-header.open .accordion-chevron { transform: rotate(90deg); }
+    .accordion-child { display: none; background-color: rgba(30,30,30,0.5); }
+    .accordion-child.open { display: table-row; }
+    .accordion-child td { padding-left: 48px !important; font-size: 13px !important; }
+    .pr-link-icon { font-size: 16px !important; vertical-align: middle; margin-left: 6px; color: var(--primary); opacity: 0.7; }
+    .pr-link-icon:hover { opacity: 1; }
+    .repo-count { display: inline-flex; align-items: center; justify-content: center; min-width: 24px; height: 24px; border-radius: 12px; background-color: var(--muted); font-size: 12px; font-weight: 600; padding: 0 6px; color: var(--muted-foreground); }
+
+    /* Patch Toggle */
+    .patch-toggle { position: relative; display: inline-block; width: 40px; height: 22px; }
+    .patch-toggle input { opacity: 0; width: 0; height: 0; }
+    .patch-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: var(--muted); border-radius: 22px; transition: 0.2s; }
+    .patch-slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background-color: var(--muted-foreground); border-radius: 50%; transition: 0.2s; }
+    .patch-toggle input:checked + .patch-slider { background-color: var(--color-success-foreground); }
+    .patch-toggle input:checked + .patch-slider:before { transform: translateX(18px); background-color: var(--background); }
+    .patched-row td { opacity: 0.45; }
+    .patched-row .patch-toggle { opacity: 1; }
+
+    /* Toast */
+    .toast-container { position: fixed; bottom: 24px; right: 24px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; }
+    .toast { padding: 12px 20px; border-radius: 8px; font-size: 14px; color: var(--foreground); background-color: var(--card); border: 1px solid var(--border); box-shadow: 0 8px 24px rgba(0,0,0,0.4); animation: toastin 0.3s ease, toastout 0.3s ease 2.7s forwards; }
+    .toast.success { border-color: var(--color-success-foreground); }
+    .toast.error { border-color: var(--color-error-foreground); }
+    @keyframes toastin { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes toastout { from { opacity: 1; } to { opacity: 0; } }
+
+    /* Settings */
+    .settings-grid { display: flex; flex-direction: column; gap: 24px; max-width: 560px; }
+    .settings-field { display: flex; flex-direction: column; gap: 8px; }
+    .settings-field label { font-size: 13px; font-weight: 500; color: var(--muted-foreground); }
+    .settings-field input[type="text"], .settings-field input[type="number"] { padding: 10px 14px; background-color: var(--card); border: 1px solid var(--border); border-radius: 8px; color: var(--foreground); font-family: var(--font-secondary); font-size: 14px; outline: none; }
+    .settings-field input:focus { border-color: var(--primary); }
+    .settings-meta { font-size: 12px; color: var(--muted-foreground); margin-top: 4px; }
+
+    /* Notes modal */
+    .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 10000; display: none; align-items: center; justify-content: center; }
+    .modal-backdrop.visible { display: flex; }
+    .modal-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-m); width: 560px; max-width: 90vw; max-height: 80vh; display: flex; flex-direction: column; box-shadow: 0 16px 48px rgba(0,0,0,0.5); animation: modalIn 0.2s ease; }
+    @keyframes modalIn { from { opacity: 0; transform: scale(0.95) translateY(8px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+    .modal-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border); }
+    .modal-header h3 { font-family: var(--font-primary); font-size: 16px; font-weight: 600; }
+    .modal-close { background: none; border: none; color: var(--muted-foreground); cursor: pointer; padding: 4px; border-radius: 4px; display: flex; }
+    .modal-close:hover { color: var(--foreground); background-color: var(--muted); }
+    .modal-body { padding: 20px; overflow-y: auto; font-size: 14px; line-height: 1.7; color: var(--foreground); white-space: pre-wrap; word-break: break-word; }
+    .notes-cell { cursor: pointer; }
+    .notes-cell:hover { color: var(--primary); }
+
+    /* Reviewer badges */
+    .reviewer-badge { display: inline-flex; align-items: center; gap: 2px; padding: 2px 8px; border-radius: 12px; background: rgba(99,102,241,0.15); color: #818cf8; font-size: 12px; font-weight: 500; white-space: nowrap; }
+
+    /* Check status icons */
+    .check-icon { font-size: 18px !important; vertical-align: middle; }
+    .check-passed { color: var(--color-success-foreground); }
+    .check-failed { color: var(--color-error-foreground); }
+    .check-pending { color: var(--color-warning-foreground); }
+
+    /* Pagination */
+    .pagination { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; background-color: var(--card); border: 1px solid var(--border); border-top: none; border-radius: 0 0 var(--radius-m) var(--radius-m); }
+    .pagination-info { font-size: 13px; color: var(--muted-foreground); }
+    .pagination-controls { display: flex; align-items: center; gap: 8px; }
+    .pagination-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 6px; border: 1px solid var(--border); background-color: var(--secondary); color: var(--foreground); cursor: pointer; transition: all 0.15s ease; }
+    .pagination-btn:hover:not(:disabled) { background-color: var(--muted); border-color: var(--primary); }
+    .pagination-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+    .pagination-btn .material-icons { font-size: 18px; }
+    .page-numbers { display: flex; gap: 4px; }
+    .page-num { display: inline-flex; align-items: center; justify-content: center; min-width: 32px; height: 32px; border-radius: 6px; border: 1px solid transparent; background: none; color: var(--muted-foreground); font-family: var(--font-primary); font-size: 13px; cursor: pointer; transition: all 0.15s ease; }
+    .page-num:hover { background-color: var(--muted); color: var(--foreground); }
+    .page-num.active { background-color: var(--primary); color: var(--primary-foreground); font-weight: 600; border-color: var(--primary); }
+    .page-size-select { padding: 4px 8px; background-color: var(--secondary); border: 1px solid var(--border); border-radius: 6px; color: var(--foreground); font-family: var(--font-secondary); font-size: 13px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <div class="dashboard">
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <img src="image-wht.png" alt="Hypothesis" class="sidebar-logo-icon">
+        <span class="sidebar-logo-text">Hypothesis</span>
+      </div>
+      <nav class="sidebar-nav">
+        <a href="#" class="nav-item active" data-tab="dashboard"><span class="material-icons">dashboard</span> Dashboard</a>
+        <a href="#" class="nav-item" data-tab="alerts"><span class="material-icons">warning</span> Alerts</a>
+        <a href="#" class="nav-item" data-tab="settings"><span class="material-icons">settings</span> Settings</a>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="user-info">
+          <span class="user-name">Dependabot Review</span>
+          <span class="user-email">v1.1.0</span>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main-content">
+
+      <!-- DASHBOARD TAB -->
+      <section id="tab-dashboard" class="tab-content active">
+        <header class="page-header">
+          <h1 class="page-title">Dependabot Review</h1>
+          <p class="page-subtitle">Review and merge dependency updates across repositories</p>
+          <div class="upload-section">
+            <button class="btn-primary" id="syncBtn"><span class="material-icons" style="font-size:18px">sync</span> Sync</button>
+            <label class="upload-area" id="uploadArea">
+              <span class="material-icons">upload_file</span>
+              <span class="upload-text"><strong>Upload XLSX</strong> or drag and drop</span>
+              <input type="file" class="file-input" id="fileInput" accept=".xlsx,.xls">
+            </label>
+            <span class="file-name" id="fileName"></span>
+          </div>
+        </header>
+        <section class="stats-grid">
+          <div class="stat-card"><span class="stat-label">Total Alerts</span><span class="stat-value default" id="statTotal">0</span></div>
+          <div class="stat-card"><span class="stat-label">High Priority (P1)</span><span class="stat-value error" id="statHigh">0</span></div>
+          <div class="stat-card"><span class="stat-label">Medium Priority (P2)</span><span class="stat-value warning" id="statMedium">0</span></div>
+          <div class="stat-card"><span class="stat-label">Low Priority (P3)</span><span class="stat-value success" id="statLow">0</span></div>
+        </section>
+        <section class="table-section">
+          <div class="table-header">
+            <h2 class="table-title">Dependabot Alerts</h2>
+            <div class="table-actions">
+              <div class="multi-select" id="dashSeverityFilter">
+                <button class="multi-select-btn" type="button">All Severities <span class="material-icons arrow">expand_more</span></button>
+                <div class="multi-select-dropdown" id="dashSeverityDropdown"></div>
+              </div>
+              <div class="multi-select" id="dashReviewerFilter">
+                <button class="multi-select-btn" type="button">All Reviewers <span class="material-icons arrow">expand_more</span></button>
+                <div class="multi-select-dropdown" id="dashReviewerDropdown"></div>
+              </div>
+              <div class="multi-select" id="dashStatusFilter">
+                <button class="multi-select-btn" type="button">All Status <span class="material-icons arrow">expand_more</span></button>
+                <div class="multi-select-dropdown" id="dashStatusDropdown"></div>
+              </div>
+              <button class="btn-secondary" id="exportBtn" disabled><span class="material-icons" style="font-size:18px">download</span> Export</button>
+            </div>
+          </div>
+          <div class="data-table"><div class="table-container">
+            <table>
+              <thead><tr><th style="width:22%" data-sort="package">Package <span class="material-icons sort-arrow">unfold_more</span></th><th data-sort="severity">Severity <span class="material-icons sort-arrow">unfold_more</span></th><th data-sort="priority">Priority <span class="material-icons sort-arrow">unfold_more</span></th><th data-sort="repos">Repos <span class="material-icons sort-arrow">unfold_more</span></th><th data-sort="reviewer">Reviewer / Assignee <span class="material-icons sort-arrow">unfold_more</span></th><th data-sort="check">Check <span class="material-icons sort-arrow">unfold_more</span></th><th data-sort="pr">PR # <span class="material-icons sort-arrow">unfold_more</span></th><th data-sort="merged">Merged? <span class="material-icons sort-arrow">unfold_more</span></th><th>Notes</th></tr></thead>
+              <tbody id="tableBody"><tr><td colspan="9"><div class="empty-state"><span class="material-icons">upload_file</span><h3>No data loaded</h3><p>Click <strong>Sync</strong> to fetch from GitHub, or upload an XLSX file</p></div></td></tr></tbody>
+            </table>
+          </div></div>
+          <div id="dashPagination" class="pagination" style="display:none"></div>
+        </section>
+      </section>
+
+      <!-- ALERTS TAB -->
+      <section id="tab-alerts" class="tab-content">
+        <header class="page-header">
+          <h1 class="page-title">Grouped Alerts</h1>
+          <p class="page-subtitle">Vulnerabilities grouped by package &mdash; fix once, mark patched everywhere</p>
+        </header>
+        <section class="stats-grid">
+          <div class="stat-card"><span class="stat-label">Total Vulnerabilities</span><span class="stat-value default" id="alertStatTotal">0</span></div>
+          <div class="stat-card"><span class="stat-label">Patched</span><span class="stat-value success" id="alertStatPatched">0</span></div>
+          <div class="stat-card"><span class="stat-label">Unpatched (Todo)</span><span class="stat-value error" id="alertStatUnpatched">0</span></div>
+          <div class="stat-card"><span class="stat-label">Critical / High</span><span class="stat-value warning" id="alertStatCritical">0</span></div>
+        </section>
+        <section class="table-section">
+          <div class="table-header">
+            <h2 class="table-title">Vulnerability Groups</h2>
+            <div class="table-actions">
+              <input type="text" class="search-input" id="alertSearch" placeholder="Search packages...">
+              <div class="multi-select" id="alertSeverityFilter">
+                <button class="multi-select-btn" type="button">All Severities <span class="material-icons arrow">expand_more</span></button>
+                <div class="multi-select-dropdown" id="alertSeverityDropdown"></div>
+              </div>
+              <div class="multi-select" id="alertReviewerFilter">
+                <button class="multi-select-btn" type="button">All Reviewers <span class="material-icons arrow">expand_more</span></button>
+                <div class="multi-select-dropdown" id="alertReviewerDropdown"></div>
+              </div>
+              <div class="multi-select" id="alertPatchedFilter">
+                <button class="multi-select-btn" type="button">All Patched <span class="material-icons arrow">expand_more</span></button>
+                <div class="multi-select-dropdown" id="alertPatchedDropdown"></div>
+              </div>
+              <button class="btn-secondary" id="exportGroupedBtn" disabled><span class="material-icons" style="font-size:18px">download</span> Export</button>
+            </div>
+          </div>
+          <div class="data-table"><div class="table-container">
+            <table>
+              <thead><tr><th style="width:26%" data-sort="package">Package <span class="material-icons sort-arrow">unfold_more</span></th><th data-sort="severity">Severity <span class="material-icons sort-arrow">unfold_more</span></th><th data-sort="priority">Priority <span class="material-icons sort-arrow">unfold_more</span></th><th data-sort="repos">Repos <span class="material-icons sort-arrow">unfold_more</span></th><th data-sort="reviewer">Reviewer / Assignee <span class="material-icons sort-arrow">unfold_more</span></th><th data-sort="pr">PR <span class="material-icons sort-arrow">unfold_more</span></th><th>Advisory</th><th style="width:90px">Patched?</th></tr></thead>
+              <tbody id="groupedTableBody"><tr><td colspan="7"><div class="empty-state"><span class="material-icons">warning</span><h3>No alerts loaded</h3><p>Sync data from the Dashboard tab first</p></div></td></tr></tbody>
+            </table>
+          </div></div>
+          <div id="alertsPagination" class="pagination" style="display:none"></div>
+        </section>
+      </section>
+
+      <!-- SETTINGS TAB -->
+      <section id="tab-settings" class="tab-content">
+        <header class="page-header">
+          <h1 class="page-title">Settings</h1>
+          <p class="page-subtitle">Configure the dashboard sync and display options</p>
+        </header>
+        <div class="settings-grid">
+          <div class="settings-field">
+            <label for="settingsOrg">Organization</label>
+            <input type="text" id="settingsOrg" placeholder="hypothesis">
+            <span class="settings-meta">GitHub organization or user name to scan</span>
+          </div>
+          <div class="settings-field">
+            <label for="settingsRepoFilter">Repository filter (optional)</label>
+            <input type="text" id="settingsRepoFilter" placeholder="e.g. frontend">
+            <span class="settings-meta">Only include repos whose name contains this string</span>
+          </div>
+          <div class="settings-field">
+            <label for="settingsType">Package type filter</label>
+            <select class="filter-select" id="settingsType" style="width:100%"><option value="">All</option><option value="npm_and_yarn">npm / yarn</option><option value="pip">pip</option><option value="bundler">bundler</option><option value="docker">docker</option><option value="github_actions">GitHub Actions</option></select>
+          </div>
+          <div class="settings-field">
+            <label for="settingsServer">Server URL</label>
+            <input type="text" id="settingsServer" placeholder="http://localhost:8080">
+            <span class="settings-meta">The local server started with <code>./serve.sh hypothesis</code></span>
+          </div>
+          <div style="display:flex;gap:12px;align-items:center;margin-top:8px;">
+            <button class="btn-primary" id="settingsSyncBtn"><span class="material-icons" style="font-size:18px">sync</span> Sync Now</button>
+            <span class="settings-meta" id="lastSyncedLabel"></span>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+  <!-- Notes modal -->
+  <div class="modal-backdrop" id="notesModal" onclick="closeNotesModal()">
+    <div class="modal-card" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h3>Notes</h3>
+        <button class="modal-close" onclick="closeNotesModal()"><span class="material-icons">close</span></button>
+      </div>
+      <div class="modal-body" id="notesModalBody"></div>
+    </div>
+  </div>
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script>
+    /* ===== STATE ===== */
+    let allData = [];
+    let filteredData = [];
+    let vulnGroups = [];
+    let dashPage = 1, dashPageSize = 10;
+    let alertsPage = 1, alertsPageSize = 10;
+    let dashSortCol = 'severity', dashSortDir = 'desc';
+    let alertSortCol = 'severity', alertSortDir = 'desc';
+
+    function getPatchedState() {
+      try { return JSON.parse(localStorage.getItem('patchedState') || '{}'); }
+      catch(e) { return {}; }
+    }
+    function savePatchedState(s) { localStorage.setItem('patchedState', JSON.stringify(s)); }
+    function getSetting(k, fb) { return localStorage.getItem('setting_' + k) || fb; }
+    function setSetting(k, v) { localStorage.setItem('setting_' + k, v); }
+
+    /* ===== DOM ===== */
+    const $ = s => document.querySelector(s);
+    const $$ = s => document.querySelectorAll(s);
+
+    const fileInput = $('#fileInput'), uploadArea = $('#uploadArea'), fileName = $('#fileName');
+    const tableBody = $('#tableBody');
+    const exportBtn = $('#exportBtn'), syncBtn = $('#syncBtn');
+    const statTotal = $('#statTotal'), statHigh = $('#statHigh'), statMedium = $('#statMedium'), statLow = $('#statLow');
+
+    const groupedTableBody = $('#groupedTableBody');
+    const alertSearch = $('#alertSearch');
+    const exportGroupedBtn = $('#exportGroupedBtn');
+    const alertStatTotal = $('#alertStatTotal'), alertStatPatched = $('#alertStatPatched');
+    const alertStatUnpatched = $('#alertStatUnpatched'), alertStatCritical = $('#alertStatCritical');
+
+    const settingsOrg = $('#settingsOrg'), settingsRepoFilter = $('#settingsRepoFilter');
+    const settingsType = $('#settingsType'), settingsServer = $('#settingsServer');
+    const settingsSyncBtn = $('#settingsSyncBtn'), lastSyncedLabel = $('#lastSyncedLabel');
+
+    /* ===== TABS ===== */
+    $$('.nav-item[data-tab]').forEach(item => {
+      item.addEventListener('click', e => {
+        e.preventDefault();
+        $$('.nav-item').forEach(n => n.classList.remove('active'));
+        item.classList.add('active');
+        $$('.tab-content').forEach(t => t.classList.remove('active'));
+        const t = document.getElementById('tab-' + item.dataset.tab);
+        if (t) t.classList.add('active');
+      });
+    });
+
+    /* ===== SETTINGS INIT ===== */
+    function detectServer() {
+      if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') return location.origin;
+      return 'http://localhost:8080';
+    }
+    settingsOrg.value = getSetting('org', 'hypothesis');
+    settingsRepoFilter.value = getSetting('repoFilter', '');
+    settingsType.value = getSetting('type', '');
+    settingsServer.value = getSetting('server', detectServer());
+    settingsOrg.addEventListener('change', () => setSetting('org', settingsOrg.value));
+    settingsRepoFilter.addEventListener('change', () => setSetting('repoFilter', settingsRepoFilter.value));
+    settingsType.addEventListener('change', () => setSetting('type', settingsType.value));
+    settingsServer.addEventListener('change', () => setSetting('server', settingsServer.value));
+    function getServerUrl() { return settingsServer.value || detectServer(); }
+    function showLastSynced() {
+      const ts = getSetting('lastSynced', '');
+      lastSyncedLabel.textContent = ts ? 'Last synced: ' + ts : '';
+    }
+    showLastSynced();
+
+    /* ===== TOAST ===== */
+    function toast(msg, type) {
+      const el = document.createElement('div');
+      el.className = 'toast ' + (type || '');
+      el.textContent = msg;
+      $('#toastContainer').appendChild(el);
+      setTimeout(() => el.remove(), 3200);
+    }
+
+    /* ===== SYNC ===== */
+    async function syncData() {
+      const org = settingsOrg.value || 'hypothesis';
+      const repo = settingsRepoFilter.value || '';
+      const type = settingsType.value || '';
+      const base = getServerUrl();
+      let url = base + '/api/alerts?org=' + encodeURIComponent(org);
+      if (repo) url += '&repo=' + encodeURIComponent(repo);
+      if (type) url += '&type=' + encodeURIComponent(type);
+
+      syncBtn.classList.add('spinning');
+      syncBtn.disabled = true;
+      settingsSyncBtn.disabled = true;
+
+      try {
+        const resp = await fetch(url);
+        if (!resp.ok) {
+          const eb = await resp.json().catch(() => ({}));
+          throw new Error(eb.error || 'Server returned ' + resp.status);
+        }
+        const json = await resp.json();
+        processJsonData(json.alerts || []);
+        const now = new Date().toLocaleString();
+        setSetting('lastSynced', now);
+        showLastSynced();
+        toast('Synced ' + allData.length + ' alerts from ' + org, 'success');
+      } catch (err) {
+        console.error('Sync failed:', err);
+        toast('Sync failed: ' + err.message, 'error');
+      } finally {
+        syncBtn.classList.remove('spinning');
+        syncBtn.disabled = false;
+        settingsSyncBtn.disabled = false;
+      }
+    }
+    syncBtn.addEventListener('click', syncData);
+    settingsSyncBtn.addEventListener('click', syncData);
+
+    /* ===== DATA PROCESSING ===== */
+    function processJsonData(alerts) {
+      allData = alerts.map((r, i) => ({
+        id: i,
+        repo: r.repo || '',
+        ghsa: r.ghsa || '',
+        alertsCount: 1,
+        severity: r.severity || 'Unknown',
+        priority: r.priority || 'P3',
+        package: r.package || r.packageName || '',
+        ecosystem: r.ecosystem || '',
+        advisorySummary: r.advisorySummary || r.title || '',
+        advisoryUrl: r.advisoryUrl || '',
+        prUrl: r.prUrl || r.pr || '',
+        prNumber: r.prNumber || '',
+        prId: r.prId || '',
+        checkStatus: r.checkStatus || '',
+        mergeMethod: r.mergeMethod || '',
+        mergeDecision: '',
+        merged: r.merged || 'No',
+        mergedDate: '',
+        mergedBy: '',
+        notes: r.notes || '',
+        reviewers: r.reviewers || [],
+        updates: r.updates || [],
+      }));
+      onDataLoaded();
+    }
+
+    function processXlsxData(jsonData) {
+      allData = jsonData.map((row, i) => ({
+        id: i,
+        repo: row['Repo'] || row['Repository'] || '',
+        ghsa: row['GHSA'] || row['GHSA ID'] || '',
+        alertsCount: row['Alerts Count'] || 1,
+        severity: row['Severity'] || 'Unknown',
+        priority: row['Priority'] || 'P3',
+        package: row['Package'] || row['Dependency'] || '',
+        ecosystem: row['Ecosystem'] || row['Package Type'] || '',
+        advisorySummary: row['Advisory Summary'] || '',
+        advisoryUrl: row['Advisory URL'] || '',
+        prUrl: row['PR/MR URL'] || row['PR URL'] || '',
+        prNumber: row['PR/MR #'] || row['PR #'] || '',
+        prId: '',
+        checkStatus: '',
+        mergeMethod: '',
+        mergeDecision: row['Merge Decision'] || '',
+        merged: row['Merged?'] || 'No',
+        mergedDate: row['Merged Date'] || '',
+        mergedBy: row['Merged By'] || '',
+        notes: row['Notes'] || '',
+        updates: [],
+      }));
+      onDataLoaded();
+    }
+
+    function onDataLoaded() {
+      filteredData = [...allData];
+      populateSeverityFilters();
+      populateReviewerFilters();
+      populateStatusFilters();
+      updateStats();
+      renderTable();
+      buildVulnGroups();
+      renderGroupedTable();
+      exportBtn.disabled = false;
+      exportGroupedBtn.disabled = false;
+    }
+
+    /* ===== DASHBOARD TABLE ===== */
+    function updateStats() {
+      statTotal.textContent = filteredData.length;
+      statHigh.textContent = filteredData.filter(d => d.priority === 'P1' || d.severity === 'High').length;
+      statMedium.textContent = filteredData.filter(d => d.priority === 'P2' || d.severity === 'Medium').length;
+      statLow.textContent = filteredData.filter(d => d.priority === 'P3' || d.severity === 'Low').length;
+    }
+
+    function renderTable() {
+      if (!filteredData.length) {
+        tableBody.innerHTML = '<tr><td colspan="9"><div class="empty-state">' +
+          '<span class="material-icons">search_off</span>' +
+          '<h3>No matching alerts</h3>' +
+          '<p>Try adjusting your filters or syncing data</p></div></td></tr>';
+        document.getElementById('dashPagination').style.display = 'none';
+        return;
+      }
+      // Build groups for the dashboard view (same grouping as alerts)
+      const map = {};
+      for (const r of filteredData) {
+        const k = groupKey(r);
+        if (!map[k]) {
+          map[k] = {
+            key: k, package: r.package, ghsa: r.ghsa, severity: r.severity, priority: r.priority,
+            advisorySummary: r.advisorySummary, advisoryUrl: r.advisoryUrl, ecosystem: r.ecosystem, repos: []
+          };
+        }
+        const so = { CRITICAL: 4, High: 3, Medium: 2, Low: 1, Unknown: 0 };
+        if ((so[r.severity] || 0) > (so[map[k].severity] || 0)) map[k].severity = r.severity;
+        const po = { P1: 3, P2: 2, P3: 1 };
+        if ((po[r.priority] || 0) > (po[map[k].priority] || 0)) map[k].priority = r.priority;
+        map[k].repos.push(r);
+      }
+      const dashGroups = Object.values(map);
+      sortGroups(dashGroups, dashSortCol, dashSortDir);
+
+      // Paginate groups
+      const totalPages = Math.ceil(dashGroups.length / dashPageSize);
+      if (dashPage > totalPages) dashPage = totalPages || 1;
+      const pageGroups = dashGroups.slice((dashPage - 1) * dashPageSize, dashPage * dashPageSize);
+
+      let h = '';
+      pageGroups.forEach((g, i) => {
+        const gi = (dashPage - 1) * dashPageSize + i;
+        const firstPr = g.repos.find(r => r.prUrl);
+        const prLink = firstPr ? '<a href="' + esc(firstPr.prUrl) + '" target="_blank" class="link" onclick="event.stopPropagation()" title="Open PR">' +
+          '<span class="material-icons pr-link-icon">open_in_new</span></a>' : '';
+        const checkAgg = aggregateCheck(g.repos);
+        const mergedAll = g.repos.every(r => r.merged === 'Yes');
+        const mergedSome = g.repos.some(r => r.merged === 'Yes');
+        const mergedLabel = mergedAll ? 'Yes' : mergedSome ? 'Partial' : 'No';
+        const mergedClass = mergedAll ? 'status-passed' : mergedSome ? 'status-pending' : '';
+        const notesTrunc = truncate(g.advisorySummary || '', 40);
+        const groupReviewers = collectReviewers(g.repos);
+        h += '<tr class="accordion-header" data-dgi="' + gi + '">' +
+          '<td><span class="material-icons accordion-chevron">chevron_right</span> <strong>' + esc(g.package) + '</strong>' + prLink + '</td>' +
+          '<td><span class="risk-label risk-' + g.severity.toLowerCase() + '">' + esc(g.severity) + '</span></td>' +
+          '<td><span class="priority-label priority-' + g.priority.toLowerCase() + '">' + esc(g.priority) + '</span></td>' +
+          '<td><span class="repo-count">' + g.repos.length + '</span></td>' +
+          '<td>' + reviewerBadges(groupReviewers) + '</td>' +
+          '<td>' + checkStatusHtml(checkAgg) + '</td>' +
+          '<td>' + (firstPr ? '<a href="' + esc(firstPr.prUrl) + '" target="_blank" class="link" onclick="event.stopPropagation()">#' + esc(String(firstPr.prNumber)) + '</a>' : '\u2013') + '</td>' +
+          '<td class="' + mergedClass + '">' + esc(mergedLabel) + '</td>' +
+          '<td>' + (notesTrunc ? '<span class="notes-cell" onclick="event.stopPropagation();showNotesModal(\'' + escAttr(g.advisorySummary || '') + '\')">' + esc(notesTrunc) + '</span>' : '\u2013') + '</td>' +
+          '</tr>';
+        for (const r of g.repos) {
+          const rNotes = truncate(r.notes, 50);
+          h += '<tr class="accordion-child" data-dgchild="' + gi + '">' +
+            '<td>' + esc(r.repo) + '</td>' +
+            '<td colspan="2">' + esc(r.ecosystem) + '</td>' +
+            '<td></td>' +
+            '<td>' + reviewerBadges(r.reviewers || []) + '</td>' +
+            '<td>' + checkStatusHtml(r.checkStatus) + '</td>' +
+            '<td>' + (r.prUrl ? '<a href="' + esc(r.prUrl) + '" target="_blank" class="link">#' + esc(String(r.prNumber)) + '</a>' : '\u2013') + '</td>' +
+            '<td class="' + (r.merged === 'Yes' ? 'status-passed' : 'status-pending') + '">' + esc(r.merged) + '</td>' +
+            '<td>' + (rNotes ? '<span class="notes-cell" onclick="showNotesModal(\'' + escAttr(r.notes) + '\')">' + esc(rNotes) + '</span>' : '\u2013') + '</td>' +
+            '</tr>';
+        }
+      });
+      tableBody.innerHTML = h;
+
+      // Attach accordion click handlers
+      tableBody.querySelectorAll('.accordion-header').forEach(hdr => {
+        hdr.addEventListener('click', () => {
+          const gi = hdr.dataset.dgi;
+          hdr.classList.toggle('open');
+          tableBody.querySelectorAll('[data-dgchild="' + gi + '"]').forEach(row => {
+            row.classList.toggle('open');
+          });
+        });
+      });
+
+      renderPagination('dashPagination', dashPage, totalPages, dashGroups.length, dashPageSize,
+        p => { dashPage = p; renderTable(); },
+        s => { dashPageSize = s; dashPage = 1; renderTable(); }
+      );
+      updateSortHeaders(document.querySelector('#tab-dashboard table'), dashSortCol, dashSortDir);
+    }
+
+    function aggregateCheck(repos) {
+      const prio = { Failed: 3, Pending: 2, Passed: 1 };
+      let worst = '';
+      for (const r of repos) {
+        const cs = r.checkStatus || '';
+        if ((prio[cs] || 0) > (prio[worst] || 0)) worst = cs;
+      }
+      return worst;
+    }
+
+    function collectReviewers(repos) {
+      const seen = new Set();
+      const result = [];
+      for (const r of repos) {
+        for (const name of (r.reviewers || [])) {
+          if (!seen.has(name)) { seen.add(name); result.push(name); }
+        }
+      }
+      return result;
+    }
+
+    function reviewerBadges(reviewers) {
+      if (!reviewers || !reviewers.length) return '\u2013';
+      return reviewers.map(r =>
+        '<span class="reviewer-badge" title="' + esc(r) + '">' +
+        '<span class="material-icons" style="font-size:14px;vertical-align:middle;margin-right:2px">person</span>' +
+        esc(r) + '</span>'
+      ).join(' ');
+    }
+
+    function checkStatusHtml(status) {
+      if (!status) return '\u2013';
+      if (status === 'Passed') return '<span class="material-icons check-icon check-passed" title="Passed">check_circle</span>';
+      if (status === 'Failed') return '<span class="material-icons check-icon check-failed" title="Failed">cancel</span>';
+      return '<span class="material-icons check-icon check-pending" title="' + esc(status) + '">schedule</span>';
+    }
+
+    /* ===== SORTING ===== */
+    const sevOrder = { CRITICAL: 4, High: 3, Medium: 2, Low: 1, Unknown: 0 };
+    const prioOrder = { P1: 3, P2: 2, P3: 1 };
+    const checkOrder = { failed: 3, pending: 2, passed: 1, missing: 0 };
+    const mergedOrder = { Yes: 2, Partial: 1, No: 0 };
+
+    function groupSortValue(g, col) {
+      if (col === 'package') return (g.package || '').toLowerCase();
+      if (col === 'severity') return sevOrder[g.severity] || 0;
+      if (col === 'priority') return prioOrder[g.priority] || 0;
+      if (col === 'repos') return g.repos ? g.repos.length : 0;
+      if (col === 'reviewer') return collectReviewers(g.repos).join(',').toLowerCase();
+      if (col === 'check') return checkOrder[(aggregateCheck(g.repos) || '').toLowerCase()] || 0;
+      if (col === 'pr') {
+        const fp = (g.repos || []).find(r => r.prNumber);
+        return fp ? Number(fp.prNumber) || 0 : 0;
+      }
+      if (col === 'merged') {
+        const ma = (g.repos || []).every(r => r.merged === 'Yes') ? 'Yes' :
+                   (g.repos || []).some(r => r.merged === 'Yes') ? 'Partial' : 'No';
+        return mergedOrder[ma] || 0;
+      }
+      return 0;
+    }
+
+    function sortGroups(groups, col, dir, patchedFirst) {
+      groups.sort((a, b) => {
+        if (patchedFirst && a.patched !== b.patched) return a.patched ? 1 : -1;
+        const va = groupSortValue(a, col), vb = groupSortValue(b, col);
+        let cmp = 0;
+        if (typeof va === 'string') cmp = va.localeCompare(vb);
+        else cmp = va - vb;
+        return dir === 'asc' ? cmp : -cmp;
+      });
+    }
+
+    function updateSortHeaders(tableEl, col, dir) {
+      tableEl.querySelectorAll('th[data-sort]').forEach(th => {
+        const arrow = th.querySelector('.sort-arrow');
+        if (!arrow) return;
+        if (th.dataset.sort === col) {
+          th.classList.add('sort-active');
+          arrow.textContent = dir === 'asc' ? 'expand_less' : 'expand_more';
+        } else {
+          th.classList.remove('sort-active');
+          arrow.textContent = 'unfold_more';
+        }
+      });
+    }
+
+    // Dashboard sort click handlers
+    document.querySelector('#tab-dashboard thead').addEventListener('click', e => {
+      const th = e.target.closest('th[data-sort]');
+      if (!th) return;
+      const col = th.dataset.sort;
+      if (dashSortCol === col) dashSortDir = dashSortDir === 'asc' ? 'desc' : 'asc';
+      else { dashSortCol = col; dashSortDir = col === 'package' ? 'asc' : 'desc'; }
+      dashPage = 1;
+      updateStats();
+      renderTable();
+    });
+
+    // Alerts sort click handlers
+    document.querySelector('#tab-alerts thead').addEventListener('click', e => {
+      const th = e.target.closest('th[data-sort]');
+      if (!th) return;
+      const col = th.dataset.sort;
+      if (alertSortCol === col) alertSortDir = alertSortDir === 'asc' ? 'desc' : 'asc';
+      else { alertSortCol = col; alertSortDir = col === 'package' ? 'asc' : 'desc'; }
+      alertsPage = 1;
+      buildVulnGroups();
+      renderGroupedTable();
+    });
+
+    function applyDashFilters() {
+      const selSev = getSelectedValues('dashSeverityDropdown');
+      const selReviewers = getSelectedValues('dashReviewerDropdown');
+      const selStatus = getSelectedValues('dashStatusDropdown');
+      filteredData = allData.filter(r =>
+        (selSev.length === 0 || selSev.includes(r.severity)) &&
+        (selStatus.length === 0 || selStatus.includes(r.merged)) &&
+        (selReviewers.length === 0 || (r.reviewers || []).some(rv => selReviewers.includes(rv)))
+      );
+      dashPage = 1;
+      updateStats();
+      renderTable();
+    }
+
+    /* ===== MULTI-SELECT FILTERS ===== */
+    function getAllSeverities() {
+      const order = ['CRITICAL', 'High', 'Medium', 'Low'];
+      const seen = new Set();
+      for (const r of allData) { if (r.severity) seen.add(r.severity); }
+      return order.filter(s => seen.has(s));
+    }
+
+    function getAllReviewers() {
+      const seen = new Set();
+      for (const r of allData) {
+        for (const rv of (r.reviewers || [])) seen.add(rv);
+      }
+      return [...seen].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+    }
+
+    function populateSeverityFilters() {
+      const sevs = getAllSeverities();
+      populateDropdown('dashSeverityDropdown', sevs, 'All Severities', () => { applyDashFilters(); });
+      populateDropdown('alertSeverityDropdown', sevs, 'All Severities', () => { alertsPage = 1; renderGroupedTable(); });
+    }
+
+    function populateReviewerFilters() {
+      const reviewers = getAllReviewers();
+      populateDropdown('dashReviewerDropdown', reviewers, 'All Reviewers', () => { applyDashFilters(); });
+      populateDropdown('alertReviewerDropdown', reviewers, 'All Reviewers', () => { alertsPage = 1; renderGroupedTable(); });
+    }
+
+    function populateStatusFilters() {
+      populateDropdown('dashStatusDropdown', ['Yes', 'No'], 'All Status', () => { applyDashFilters(); });
+      populateDropdown('alertPatchedDropdown', ['Unpatched (Todo)', 'Patched'], 'All Patched', () => { alertsPage = 1; renderGroupedTable(); });
+    }
+
+    function populateDropdown(containerId, items, allLabel, onChange) {
+      const container = document.getElementById(containerId);
+      if (!items.length) {
+        container.innerHTML = '<div class="ms-empty">No options found</div>';
+        return;
+      }
+      let html = '';
+      for (const item of items) {
+        html += '<label><input type="checkbox" value="' + esc(item) + '"> ' + esc(item) + '</label>';
+      }
+      html += '<span class="ms-clear">Clear all</span>';
+      container.innerHTML = html;
+      container.dataset.allLabel = allLabel;
+      container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+        cb.addEventListener('change', () => { updateMultiSelectLabel(containerId); onChange(); });
+      });
+      container.querySelector('.ms-clear').addEventListener('click', () => {
+        container.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+        updateMultiSelectLabel(containerId);
+        onChange();
+      });
+    }
+
+    function getSelectedValues(containerId) {
+      const container = document.getElementById(containerId);
+      return [...container.querySelectorAll('input[type="checkbox"]:checked')].map(cb => cb.value);
+    }
+
+    function updateMultiSelectLabel(containerId) {
+      const container = document.getElementById(containerId);
+      const btn = container.parentElement.querySelector('.multi-select-btn');
+      const sel = getSelectedValues(containerId);
+      const allLabel = container.dataset.allLabel || 'All';
+      if (sel.length === 0) {
+        btn.innerHTML = allLabel + ' <span class="material-icons arrow">expand_more</span>';
+      } else {
+        btn.innerHTML = esc(sel.length === 1 ? sel[0] : sel.length + ' selected') +
+          ' <span class="filter-count">' + sel.length + '</span>' +
+          ' <span class="material-icons arrow">expand_more</span>';
+      }
+    }
+
+    // Toggle dropdown open/close
+    document.querySelectorAll('.multi-select-btn').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const dd = btn.nextElementSibling;
+        const wasOpen = dd.classList.contains('open');
+        document.querySelectorAll('.multi-select-dropdown').forEach(d => d.classList.remove('open'));
+        if (!wasOpen) dd.classList.add('open');
+      });
+    });
+    // Close dropdowns on outside click
+    document.addEventListener('click', e => {
+      if (!e.target.closest('.multi-select')) {
+        document.querySelectorAll('.multi-select-dropdown').forEach(d => d.classList.remove('open'));
+      }
+    });
+
+    /* ===== GROUPED ALERTS ===== */
+    function groupKey(r) { return r.package + '|||' + (r.ghsa || r.advisorySummary || ''); }
+
+    function buildVulnGroups() {
+      const ps = getPatchedState();
+      const map = {};
+      for (const r of allData) {
+        const k = groupKey(r);
+        if (!map[k]) {
+          map[k] = {
+            key: k, package: r.package, ghsa: r.ghsa, severity: r.severity, priority: r.priority,
+            advisorySummary: r.advisorySummary, advisoryUrl: r.advisoryUrl, ecosystem: r.ecosystem,
+            patched: ps[k] === true, repos: []
+          };
+        }
+        const so = { CRITICAL: 4, High: 3, Medium: 2, Low: 1, Unknown: 0 };
+        if ((so[r.severity] || 0) > (so[map[k].severity] || 0)) map[k].severity = r.severity;
+        const po = { P1: 3, P2: 2, P3: 1 };
+        if ((po[r.priority] || 0) > (po[map[k].priority] || 0)) map[k].priority = r.priority;
+        map[k].repos.push(r);
+      }
+      vulnGroups = Object.values(map);
+      sortGroups(vulnGroups, alertSortCol, alertSortDir, true);
+    }
+
+    function getFilteredGroups() {
+      const s = alertSearch.value.toLowerCase();
+      const selSev = getSelectedValues('alertSeverityDropdown');
+      const selPatched = getSelectedValues('alertPatchedDropdown');
+      const selReviewers = getSelectedValues('alertReviewerDropdown');
+      return vulnGroups.filter(g => {
+        if (s && !g.package.toLowerCase().includes(s) && !(g.advisorySummary || '').toLowerCase().includes(s)) return false;
+        if (selSev.length > 0 && !selSev.includes(g.severity)) return false;
+        if (selPatched.length > 0) {
+          const label = g.patched ? 'Patched' : 'Unpatched (Todo)';
+          if (!selPatched.includes(label)) return false;
+        }
+        if (selReviewers.length > 0) {
+          const gr = collectReviewers(g.repos);
+          if (!gr.some(rv => selReviewers.includes(rv))) return false;
+        }
+        return true;
+      });
+    }
+
+    function updateAlertStats() {
+      const f = getFilteredGroups();
+      alertStatTotal.textContent = f.length;
+      alertStatPatched.textContent = f.filter(g => g.patched).length;
+      alertStatUnpatched.textContent = f.filter(g => !g.patched).length;
+      alertStatCritical.textContent = f.filter(g => g.severity === 'High' || g.severity === 'CRITICAL').length;
+    }
+
+    function renderGroupedTable() {
+      const groups = getFilteredGroups();
+      updateAlertStats();
+      if (!groups.length) {
+        groupedTableBody.innerHTML = '<tr><td colspan="8"><div class="empty-state">' +
+          '<span class="material-icons">check_circle</span>' +
+          '<h3>No matching vulnerabilities</h3>' +
+          '<p>All clear or adjust your filters</p></div></td></tr>';
+        document.getElementById('alertsPagination').style.display = 'none';
+        return;
+      }
+      const totalPages = Math.ceil(groups.length / alertsPageSize);
+      if (alertsPage > totalPages) alertsPage = totalPages || 1;
+      const pageGroups = groups.slice((alertsPage - 1) * alertsPageSize, alertsPage * alertsPageSize);
+
+      let h = '';
+      pageGroups.forEach((g, idx) => {
+        const i = (alertsPage - 1) * alertsPageSize + idx;
+        const pc = g.patched ? 'patched-row' : '';
+        // Find first PR URL for the header link
+        const firstPr = g.repos.find(r => r.prUrl);
+        const prLink = firstPr ? '<a href="' + esc(firstPr.prUrl) + '" target="_blank" class="link" onclick="event.stopPropagation()" title="Open PR">' +
+          '<span class="material-icons pr-link-icon">open_in_new</span></a>' : '';
+        const groupReviewersAlert = collectReviewers(g.repos);
+        h += '<tr class="accordion-header ' + pc + '" data-gi="' + i + '">' +
+          '<td><span class="material-icons accordion-chevron">chevron_right</span> <strong>' + esc(g.package) + '</strong>' + prLink + '</td>' +
+          '<td><span class="risk-label risk-' + g.severity.toLowerCase() + '">' + esc(g.severity) + '</span></td>' +
+          '<td><span class="priority-label priority-' + g.priority.toLowerCase() + '">' + esc(g.priority) + '</span></td>' +
+          '<td><span class="repo-count">' + g.repos.length + '</span></td>' +
+          '<td>' + reviewerBadges(groupReviewersAlert) + '</td>' +
+          '<td>' + (firstPr && firstPr.prUrl ? '<a href="' + esc(firstPr.prUrl) + '" target="_blank" class="link" onclick="event.stopPropagation()">#' + esc(String(firstPr.prNumber)) + '</a>' : '\u2013') + '</td>' +
+          '<td title="' + esc(g.advisorySummary || '') + '">' + (g.advisorySummary ? '<span class="notes-cell" onclick="event.stopPropagation();showNotesModal(\'' + escAttr(g.advisorySummary || '') + '\')">' + truncate(g.advisorySummary || '\u2013', 40) + '</span>' : '\u2013') + '</td>' +
+          '<td><label class="patch-toggle" onclick="event.stopPropagation()"><input type="checkbox" ' +
+          (g.patched ? 'checked ' : '') +
+          'onchange="togglePatched(\'' + escAttr(g.key) + '\',this.checked)">' +
+          '<span class="patch-slider"></span></label></td>' +
+          '</tr>';
+        for (const r of g.repos) {
+          h += '<tr class="accordion-child ' + pc + '" data-gchild="' + i + '">' +
+            '<td>' + esc(r.repo) + '</td>' +
+            '<td colspan="2">' + esc(r.ecosystem) + '</td>' +
+            '<td>' + reviewerBadges(r.reviewers || []) + '</td>' +
+            '<td>' + (r.prUrl ? '<a href="' + esc(r.prUrl) + '" target="_blank" class="link">#' + esc(String(r.prNumber)) + '</a>' : '\u2013') + '</td>' +
+            '<td>' + (r.prUrl ? '<a href="' + esc(r.prUrl) + '" target="_blank" class="link">Open MR</a>' : '\u2013') + '</td>' +
+            '<td>' + (r.notes ? '<span class="notes-cell" onclick="showNotesModal(\'' + escAttr(r.notes) + '\')">' + truncate(r.notes, 50) + '</span>' : '\u2013') + '</td>' +
+            '<td class="' + (r.merged === 'Yes' ? 'status-passed' : 'status-pending') + '">' + esc(r.merged) + '</td>' +
+            '</tr>';
+        }
+      });
+      groupedTableBody.innerHTML = h;
+
+      // Attach accordion click handlers
+      groupedTableBody.querySelectorAll('.accordion-header').forEach(hdr => {
+        hdr.addEventListener('click', () => {
+          const gi = hdr.dataset.gi;
+          hdr.classList.toggle('open');
+          groupedTableBody.querySelectorAll('[data-gchild="' + gi + '"]').forEach(row => {
+            row.classList.toggle('open');
+          });
+        });
+      });
+      renderPagination('alertsPagination', alertsPage, totalPages, groups.length, alertsPageSize,
+        p => { alertsPage = p; renderGroupedTable(); },
+        s => { alertsPageSize = s; alertsPage = 1; renderGroupedTable(); }
+      );
+      updateSortHeaders(document.querySelector('#tab-alerts table'), alertSortCol, alertSortDir);
+    }
+
+    window.togglePatched = function(key, v) {
+      const s = getPatchedState();
+      s[key] = v;
+      savePatchedState(s);
+      const g = vulnGroups.find(g => g.key === key);
+      if (g) g.patched = v;
+      renderGroupedTable();
+    };
+
+    alertSearch.addEventListener('input', () => { alertsPage = 1; renderGroupedTable(); });
+
+
+    /* ===== FILE UPLOAD ===== */
+    fileInput.addEventListener('change', e => { if (e.target.files[0]) handleFile(e.target.files[0]); });
+    uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.classList.add('dragover'); });
+    uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
+    uploadArea.addEventListener('drop', e => {
+      e.preventDefault();
+      uploadArea.classList.remove('dragover');
+      if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+    });
+
+    function handleFile(file) {
+      if (!file.name.match(/\.(xlsx|xls)$/i)) { alert('Please upload an Excel file'); return; }
+      fileName.innerHTML = '<span class="material-icons" style="font-size:18px">check_circle</span> ' + file.name;
+      const reader = new FileReader();
+      reader.onload = e => {
+        try {
+          const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+          const sn = wb.SheetNames.find(n => n.toLowerCase().includes('alert')) || wb.SheetNames[0];
+          processXlsxData(XLSX.utils.sheet_to_json(wb.Sheets[sn]));
+          toast('Loaded ' + allData.length + ' alerts from ' + file.name, 'success');
+        } catch (err) {
+          console.error(err);
+          toast('Error parsing Excel file', 'error');
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    /* ===== EXPORT ===== */
+    exportBtn.addEventListener('click', () => {
+      if (!filteredData.length) return;
+      const ps = getPatchedState();
+      const ws = XLSX.utils.json_to_sheet(filteredData.map(r => {
+        const k = groupKey(r);
+        return {
+          Repository: r.repo, Package: r.package, Ecosystem: r.ecosystem,
+          Severity: r.severity, Priority: r.priority,
+          'PR #': r.prNumber, 'PR URL': r.prUrl,
+          'Merged?': r.merged, 'Merged Date': r.mergedDate,
+          'Patched?': ps[k] ? 'Yes' : 'No', Notes: r.notes
+        };
+      }));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Alerts');
+      XLSX.writeFile(wb, 'dependabot-alerts-export.xlsx');
+    });
+
+    exportGroupedBtn.addEventListener('click', () => {
+      const groups = getFilteredGroups();
+      if (!groups.length) return;
+      const rows = [];
+      for (const g of groups) {
+        for (const r of g.repos) {
+          rows.push({
+            Package: g.package, GHSA: g.ghsa, Severity: g.severity, Priority: g.priority,
+            Advisory: g.advisorySummary, Repository: r.repo, Ecosystem: r.ecosystem,
+            'PR #': r.prNumber, 'PR URL': r.prUrl, 'Merged?': r.merged,
+            'Patched?': g.patched ? 'Yes' : 'No', Notes: r.notes
+          });
+        }
+      }
+      const ws = XLSX.utils.json_to_sheet(rows);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Grouped Alerts');
+      XLSX.writeFile(wb, 'dependabot-grouped-alerts-export.xlsx');
+    });
+
+    /* ===== PAGINATION ===== */
+    function renderPagination(containerId, currentPage, totalPages, totalItems, pageSize, onPage, onSize) {
+      const el = document.getElementById(containerId);
+      if (totalPages <= 1 && totalItems <= 10) { el.style.display = 'none'; return; }
+      el.style.display = 'flex';
+      const start = (currentPage - 1) * pageSize + 1;
+      const end = Math.min(currentPage * pageSize, totalItems);
+
+      // Build page number buttons (max 7 visible)
+      let pages = [];
+      if (totalPages <= 7) {
+        for (let p = 1; p <= totalPages; p++) pages.push(p);
+      } else {
+        pages.push(1);
+        if (currentPage > 3) pages.push('...');
+        const lo = Math.max(2, currentPage - 1), hi = Math.min(totalPages - 1, currentPage + 1);
+        for (let p = lo; p <= hi; p++) pages.push(p);
+        if (currentPage < totalPages - 2) pages.push('...');
+        pages.push(totalPages);
+      }
+
+      el.innerHTML =
+        '<span class="pagination-info">' + start + '\u2013' + end + ' of ' + totalItems + ' groups</span>' +
+        '<div class="pagination-controls">' +
+          '<select class="page-size-select" data-role="pagesize">' +
+            [10, 20, 50].map(s => '<option value="' + s + '"' + (s === pageSize ? ' selected' : '') + '>' + s + ' / page</option>').join('') +
+          '</select>' +
+          '<button class="pagination-btn" data-role="prev"' + (currentPage <= 1 ? ' disabled' : '') + '><span class="material-icons">chevron_left</span></button>' +
+          '<div class="page-numbers">' +
+            pages.map(p => p === '...' ? '<span class="page-num" style="cursor:default;opacity:0.4">&hellip;</span>' :
+              '<button class="page-num' + (p === currentPage ? ' active' : '') + '" data-page="' + p + '">' + p + '</button>'
+            ).join('') +
+          '</div>' +
+          '<button class="pagination-btn" data-role="next"' + (currentPage >= totalPages ? ' disabled' : '') + '><span class="material-icons">chevron_right</span></button>' +
+        '</div>';
+
+      el.querySelector('[data-role="prev"]').addEventListener('click', () => { if (currentPage > 1) onPage(currentPage - 1); });
+      el.querySelector('[data-role="next"]').addEventListener('click', () => { if (currentPage < totalPages) onPage(currentPage + 1); });
+      el.querySelectorAll('.page-num[data-page]').forEach(btn => {
+        btn.addEventListener('click', () => onPage(Number(btn.dataset.page)));
+      });
+      el.querySelector('[data-role="pagesize"]').addEventListener('change', function() { onSize(Number(this.value)); });
+    }
+
+    /* ===== NOTES MODAL ===== */
+    window.showNotesModal = function(text) {
+      const body = document.getElementById('notesModalBody');
+      body.textContent = text;
+      document.getElementById('notesModal').classList.add('visible');
+    };
+    window.closeNotesModal = function() {
+      document.getElementById('notesModal').classList.remove('visible');
+    };
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') closeNotesModal();
+    });
+
+    /* ===== HELPERS ===== */
+    function esc(t) {
+      if (!t) return '';
+      const d = document.createElement('div');
+      d.textContent = String(t);
+      return d.innerHTML;
+    }
+    function escAttr(t) { return String(t).replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
+    function truncate(t, m) { if (!t) return ''; t = String(t); return t.length > m ? t.substring(0, m) + '\u2026' : t; }
+
+    /* ===== AUTO-SYNC ===== */
+    (function () {
+      if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+        syncData();
+      }
+    })();
+  </script>
+</body>
+</html>

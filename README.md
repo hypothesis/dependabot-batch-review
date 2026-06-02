@@ -152,3 +152,31 @@ There are several options to filter PRs:
 
 This tool currently only fetches up to 100 PRs per run. To continue reviewing
 after processing these, simply run the tool again.
+
+## Quick Start
+
+### Export to XLSX
+
+Generate a spreadsheet report of Dependabot PRs:
+
+```sh
+./review.sh hypothesis --output-xlsx test.xlsx
+```
+
+### Export to Markdown
+
+Generate a Markdown report:
+
+```sh
+./review.sh hypothesis --output-md
+```
+
+### Launch the Dashboard
+
+Start the local web dashboard to browse, group, and manage alerts interactively:
+
+```sh
+./serve.sh hypothesis --port 8081
+```
+
+Then open <http://localhost:8081> in your browser.

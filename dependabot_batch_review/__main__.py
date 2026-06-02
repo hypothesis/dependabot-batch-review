@@ -1,7 +1,7 @@
 import sys
-
 from argparse import ArgumentParser
 from blessings import Terminal  # type: ignore
+from pathlib import Path
 
 from .github_client import GitHubClient
 from .review import (
@@ -9,6 +9,7 @@ from .review import (
     review_updates,
     DependencyUpdatePR,
     PromptAbortError,
+    generate_xlsx_report,
 )
 
 
@@ -30,7 +31,37 @@ def main() -> int:
     parser.add_argument(
         "--type", "-t", help="""Specify package type (eg. "npm_and_yarn", "pip")"""
     )
+    parser.add_argument(
+        "--output-md",
+        help="Path to a Markdown file to write the review output to.",
+    )
+    parser.add_argument(
+        "--output-xlsx",
+        help="Path to an XLSX file to write the review output to, using the template.",
+    )
+    parser.add_argument(
+        "--serve",
+        action="store_true",
+        help="Start the dashboard web server instead of running a review.",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8080,
+        help="Port for the dashboard web server (default: 8080).",
+    )
     args = parser.parse_args()
+
+    # --serve mode: launch the dashboard server and exit
+    if args.serve:
+        from .server import start_server
+
+        start_server(
+            organization=args.organization,
+            port=args.port,
+            repo_filter=args.repo_filter,
+        )
+        return 0
 
     gh_client = GitHubClient.init()
     t = Terminal()
@@ -60,20 +91,36 @@ def main() -> int:
     groups = sorted(updates_by_group_name.keys())
     print(f"Found {len(updates)} PRs for {len(groups)} dependencies\n")
 
-    to_review = len(updates)
-    for group in groups:
-        updates = updates_by_group_name[group]
-        group_type = "group" if updates[0].is_group else "dependency"
-
-        print(f"{len(updates)} updates for {group_type} {t.bold}{group}{t.normal}:")
-
+    if args.output_xlsx:
         try:
-            review_updates(gh_client, updates)
+            template_path = Path("./hypothesis_dependabot_alerts_tracker_example.xlsx")
+            output_path = Path(args.output_xlsx)
+            generate_xlsx_report(updates, template_path, output_path)
+        except Exception as e:
+            print(f"Error generating XLSX report: {e}", file=sys.stderr)
+            return 1
+    elif args.output_md:
+        try:
+            review_updates(gh_client, updates, output_md_path=args.output_md)
         except PromptAbortError:
             return 0
+    else:
+        to_review = len(updates)
+        for group in groups:
+            group_updates = updates_by_group_name[group]
+            group_type = "group" if group_updates[0].is_group else "dependency"
 
-        to_review -= len(updates)
-        print("")
+            print(
+                f"{len(group_updates)} updates for {group_type} {t.bold}{group}{t.normal}:"
+            )
+
+            try:
+                review_updates(gh_client, group_updates)
+            except PromptAbortError:
+                return 0
+
+            to_review -= len(group_updates)
+            print("")
 
     return 0
 
