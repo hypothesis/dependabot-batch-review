@@ -30,6 +30,7 @@ repo_deny:
   - deployment
 
 # npm-publishing frontend libs (no EB deploy.yml) whose npm bumps still ship.
+# Treated as production-deploying: their bumps classify Tier 1, never Tier 0.
 publish_on_merge_repos:
   - client
   - frontend-shared
@@ -44,6 +45,9 @@ health:
   deploy_poll_interval_s: 20
   health_window_min: 15 # sample 15 min of post-deploy health
   baseline_window_min: 60 # compare against the prior 60 min
+  # Wait after the deploy settles so the sampled window is post-deploy traffic
+  # (defaults to health_window_min when omitted).
+  # post_deploy_soak_min: 15
   thresholds:
     error_delta_pct: 50.0 # fail if post-deploy error rate is >50% above baseline
     min_crash_free_pct: 99.0 # fail if Sentry crash-free sessions drop below this

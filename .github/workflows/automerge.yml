@@ -51,6 +51,7 @@ jobs:
           NEW_RELIC_API_KEY: ${{ secrets.NEW_RELIC_API_KEY }}
           NEW_RELIC_ACCOUNT_ID: ${{ vars.NEW_RELIC_ACCOUNT_ID }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          # Manual dispatch can force a real run; scheduled runs follow automation.yml.
-          DBR_DRY_RUN: ${{ github.event.inputs.dry_run == 'false' && 'false' || 'true' }}
+          # Manual dispatch overrides dry-run explicitly; scheduled runs leave the
+          # variable empty so automation.yml decides (env would otherwise always win).
+          DBR_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && (inputs.dry_run && 'true' || 'false') || '' }}
         run: poetry run python -m dependabot_batch_review.automerge hypothesis

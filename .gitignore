@@ -3,3 +3,4 @@ __pycache__/
 *.csv
 .DS_Store
 scratch/
+sweep-audit-*.jsonl

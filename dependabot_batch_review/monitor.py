@@ -3,7 +3,8 @@ Curses TUI "kickoff + watch" monitor for a Dependabot sweep.
 
 Shows a live table of PRs (repo / package / tier / CI / state / health) plus a log
 pane, driven by the same engine as ``automerge`` via a worker thread that feeds a
-queue of events to the main (drawing) thread. Defaults to dry-run.
+queue of events to the main (drawing) thread. Defaults to dry-run; ``--execute``
+runs the real sweep (merge, then health-gate + rollback for Tier 1).
 
 The non-curses parts — building rows and reducing events — are pure functions so
 the state machine is testable without a TTY.
@@ -20,11 +21,17 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable, Iterable
 
-from .automerge import Decision, decide
+from .audit import AuditLog, default_audit_path
+from .automation_types import MergeOutcome
+from .automerge import (
+    Decision,
+    PreMergeCheckError,
+    _merge_and_capture,
+    gather_decisions,
+    monitoring_configured,
+)
 from .config import Config, load_config
-from .deploy_model import DeployModelCache
 from .github_client import GitHubClient
-from .review import fetch_dependency_prs
 
 
 class PRState(Enum):
@@ -147,6 +154,132 @@ def dry_run_worker(
     return work
 
 
+def live_worker(
+    gh: GitHubClient,
+    cfg: Config,
+    decisions: list[Decision],
+    audit: AuditLog | None = None,
+) -> Callable[[Emit, threading.Event], None]:
+    """
+    The real sweep: merge eligible PRs, then health-gate Tier-1 merges and roll
+    back degraded deploys — emitting row/log events as each PR advances.
+    """
+
+    def work(emit: Emit, abort: threading.Event) -> None:
+        from .health import check_health
+        from .rollback import revert_merge
+
+        def record(event: str, d: Decision, **fields: object) -> None:
+            if audit is not None:
+                audit.record(
+                    event,
+                    repo=d.pr.repo,
+                    package=d.pr.group_name,
+                    tier=int(d.classification.tier),
+                    url=d.pr.url,
+                    **fields,
+                )
+
+        def log(message: str) -> None:
+            emit(MonitorEvent("log", message=message))
+
+        def row(index: int, state: PRState, health: str | None = None) -> None:
+            emit(MonitorEvent("row", index=index, state=state, health=health))
+
+        now = datetime.now(timezone.utc)
+        can_watch = monitoring_configured(cfg)
+        watch: list[tuple[int, MergeOutcome]] = []
+        merged_count = 0
+        for index, d in enumerate(decisions):
+            if abort.is_set():
+                log("aborted")
+                break
+            if d.action not in ("merge", "merge+health"):
+                continue
+            if merged_count >= cfg.max_merges_per_run:
+                row(index, PRState.SKIPPED, "max_merges_per_run cap")
+                record("skipped", d, reason="max_merges_per_run cap")
+                continue
+            if d.action == "merge+health" and not can_watch:
+                row(index, PRState.SKIPPED, "no monitoring credentials")
+                log(f"{d.pr.repo}/{d.pr.group_name}: held — health gate has no signals")
+                record("skipped", d, reason="no monitoring credentials")
+                continue
+            row(index, PRState.MERGING)
+            try:
+                outcome = _merge_and_capture(gh, d, cfg, now)
+                merged_count += 1
+            except PreMergeCheckError as exc:
+                row(index, PRState.ESCALATED, str(exc)[:40])
+                log(f"{d.pr.repo}/{d.pr.group_name}: held — {exc}")
+                record("held", d, reason=str(exc))
+                continue
+            except Exception as exc:  # noqa: BLE001 - show and continue the sweep
+                row(index, PRState.FAILED, str(exc)[:40])
+                log(f"{d.pr.repo}/{d.pr.group_name}: merge failed: {exc!r}")
+                record("merge_failed", d, reason=repr(exc))
+                continue
+            row(index, PRState.MERGED)
+            log(f"{d.pr.repo}/{d.pr.group_name}: merged")
+            record("merged", d, merge_commit_sha=outcome.merge_commit_sha)
+            if d.action == "merge+health":
+                watch.append((index, outcome))
+
+        for index, outcome in watch:
+            if abort.is_set():
+                log("aborted before health gate completed")
+                break
+            row(index, PRState.CHECKING)
+            verdict = check_health(gh, outcome, cfg.health)
+            record(
+                "health",
+                decisions[index],
+                healthy=verdict.healthy,
+                unknown=verdict.unknown,
+                reasons=verdict.reasons,
+            )
+            if verdict.healthy:
+                row(index, PRState.HEALTHY)
+                continue
+            if verdict.unknown:
+                row(index, PRState.ESCALATED, "health unverified")
+                log(f"{outcome.repo}: health not verifiable — check manually")
+                continue
+            row(index, PRState.ROLLING_BACK, "; ".join(verdict.reasons)[:40])
+            if not outcome.merge_commit_sha:
+                row(index, PRState.FAILED, "no merge SHA; manual rollback")
+                record(
+                    "rollback", decisions[index], performed=False, reason="no merge SHA"
+                )
+                continue
+            rollback = revert_merge(
+                gh,
+                outcome.owner,
+                outcome.repo,
+                outcome.merge_commit_sha,
+                original_title=outcome.pr.group_name,
+                original_pr_url=outcome.pr.url,
+                dry_run=cfg.dry_run,
+                merge_method=outcome.pr.merge_method,
+            )
+            record(
+                "rollback",
+                decisions[index],
+                performed=rollback.performed,
+                revert_pr_url=rollback.revert_pr_url,
+                reason=rollback.reason,
+            )
+            if rollback.performed:
+                row(index, PRState.ROLLED_BACK, (rollback.revert_pr_url or "")[:40])
+                log(f"{outcome.repo}: rolled back -> {rollback.revert_pr_url}")
+            else:
+                row(index, PRState.FAILED, (rollback.reason or "rollback failed")[:40])
+                log(f"{outcome.repo}: rollback NOT performed: {rollback.reason}")
+        emit(MonitorEvent("done"))
+
+    return work
+
+
 # ----------------------------------------------------------------------- curses
 
 
@@ -236,30 +369,66 @@ def run_monitor(
         time.sleep(0.05)
 
 
-def _gather_decisions(gh: GitHubClient, cfg: Config) -> list[Decision]:
-    now = datetime.now(timezone.utc)
-    prs = fetch_dependency_prs(gh, organization=cfg.organization, labels=cfg.labels)
-    cache = DeployModelCache(gh, cfg.organization)
-    return [decide(pr, cache, cfg, now) for pr in prs]
-
-
 def main() -> int:
     from argparse import ArgumentParser
 
     parser = ArgumentParser(description="Curses monitor for a Dependabot sweep")
     parser.add_argument("organization", nargs="?", default=None)
     parser.add_argument("--config", default="automation.yml")
+    parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="Run the real sweep: merge, health-gate Tier 1, roll back on failure "
+        "(default: dry-run animation of the plan).",
+    )
+    parser.add_argument(
+        "--audit-log",
+        default=None,
+        help="Path for the JSONL audit trail (default: sweep-audit-<timestamp>.jsonl)",
+    )
     args = parser.parse_args()
 
     cfg = load_config(args.config)
     if args.organization:
         cfg.organization = args.organization
+    # The TUI goes live only with the explicit flag — config/env alone can't.
+    cfg.dry_run = not args.execute
+
+    from pathlib import Path
+
+    audit = AuditLog(Path(args.audit_log) if args.audit_log else default_audit_path())
 
     gh = GitHubClient.init()
-    decisions = _gather_decisions(gh, cfg)
+    decisions = gather_decisions(gh, cfg, datetime.now(timezone.utc))
+    audit.record(
+        "sweep_start",
+        organization=cfg.organization,
+        dry_run=cfg.dry_run,
+        prs=len(decisions),
+    )
+    for d in decisions:
+        audit.record(
+            "plan",
+            repo=d.pr.repo,
+            package=d.pr.group_name,
+            tier=int(d.classification.tier),
+            action=d.action,
+            ci=d.pr.check_status.description,
+            reasons=d.classification.reasons,
+            skip_reason=d.skip_reason,
+            url=d.pr.url,
+        )
+
     model = MonitorModel(rows=build_rows(decisions))
-    worker = dry_run_worker(decisions)
-    curses.wrapper(lambda stdscr: run_monitor(stdscr, model, worker, dry_run=True))
+    if cfg.dry_run:
+        worker = dry_run_worker(decisions)
+    else:
+        worker = live_worker(gh, cfg, decisions, audit=audit)
+    curses.wrapper(
+        lambda stdscr: run_monitor(stdscr, model, worker, dry_run=cfg.dry_run)
+    )
+    audit.record("sweep_end", dry_run=cfg.dry_run)
+    print(f"Audit log: {audit.path}")
     return 0
 
 

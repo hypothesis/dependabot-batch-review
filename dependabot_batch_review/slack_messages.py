@@ -60,27 +60,21 @@ def format_run_digest(result: RunResult, cfg: Config) -> str:
     return "\n\n".join(parts)
 
 
-def format_tier0_batch(owner: str, merged: list[MergeOutcome]) -> str:
-    lines = [f"*✅ Auto-merged {len(merged)} Tier-0 PR(s) in `{owner}` (no deploy)*"]
-    for outcome in merged:
-        lines.append(
-            f"• `{outcome.repo}`: {outcome.pr.group_name} "
-            f"{_pr_link(outcome.pr.url, outcome.pr.number)}"
-        )
-    lines.append("_No production deploy triggered (dev / lockfile / tooling only)._")
-    return "\n".join(lines)
-
-
 def _signal_lines(verdict: HealthVerdict) -> list[str]:
     lines: list[str] = []
     for signal in verdict.signals.values():
-        icon = "✅" if signal.healthy else "❌"
+        icon = "⚠️" if signal.unknown else ("✅" if signal.healthy else "❌")
         lines.append(f"  • {signal.source}: {signal.detail} {icon}")
     return lines
 
 
 def format_tier1_health(outcome: MergeOutcome, verdict: HealthVerdict) -> str:
-    status = "*HEALTHY ✅*" if verdict.healthy else "*UNHEALTHY ❌*"
+    if verdict.healthy:
+        status = "*HEALTHY ✅*"
+    elif verdict.unknown:
+        status = "*UNVERIFIED ⚠️ — manual check required*"
+    else:
+        status = "*UNHEALTHY ❌*"
     sha = (outcome.merge_commit_sha or "")[:7]
     lines = [
         f"*🚀 Tier-1 merged & deployed: `{outcome.owner}/{outcome.repo}`*",
@@ -88,6 +82,8 @@ def format_tier1_health(outcome: MergeOutcome, verdict: HealthVerdict) -> str:
         f"Health gate: {status}",
     ]
     lines.extend(_signal_lines(verdict))
+    for reason in verdict.reasons:
+        lines.append(f"  • {reason}")
     return "\n".join(lines)
 
 
@@ -118,18 +114,4 @@ def format_rollback(
             f"*Claude triage:* {triage.summary} "
             f"(recommend: {triage.recommendation}, confidence: {triage.confidence})"
         )
-    return "\n".join(lines)
-
-
-def format_tier2_digest(
-    owner: str, items: list[tuple[MergeOutcome, TriageResult | None]]
-) -> str:
-    lines = [f"*🔍 {len(items)} Dependabot PR(s) need human review in `{owner}`*", ""]
-    for outcome, triage in items:
-        lines.append(
-            f"*{outcome.pr.group_name}* — `{outcome.repo}` "
-            f"{_pr_link(outcome.pr.url, outcome.pr.number)}"
-        )
-        if triage is not None:
-            lines.append(f"  _Claude:_ {triage.summary} ({triage.confidence})")
     return "\n".join(lines)

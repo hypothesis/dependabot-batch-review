@@ -17,11 +17,16 @@ import time
 from argparse import ArgumentParser
 from datetime import datetime, timezone
 
-from .automerge import Decision, _merge_and_capture, decide
+from .automation_types import MergeOutcome
+from .automerge import (
+    Decision,
+    PreMergeCheckError,
+    _merge_and_capture,
+    gather_decisions,
+    monitoring_configured,
+)
 from .config import Config, load_config
-from .deploy_model import DeployModelCache
 from .github_client import GitHubClient
-from .review import fetch_dependency_prs
 
 
 def _select(decisions: list[Decision], tier: int) -> list[Decision]:
@@ -43,16 +48,20 @@ def run_bulk(
     now: datetime | None = None,
 ) -> int:
     now = now or datetime.now(timezone.utc)
-    prs = fetch_dependency_prs(gh, organization=cfg.organization, labels=cfg.labels)
-    if repos:
-        prs = [p for p in prs if p.repo in set(repos)]
-    cache = DeployModelCache(gh, cfg.organization)
-    decisions = [decide(pr, cache, cfg, now) for pr in prs]
+    decisions = gather_decisions(gh, cfg, now, repos=repos)
 
     mode = "DRY-RUN" if cfg.dry_run else "LIVE"
-    print(f"[{mode}] {len(prs)} open PRs in {cfg.organization}; waves={tiers}\n")
+    print(f"[{mode}] {len(decisions)} open PRs in {cfg.organization}; waves={tiers}\n")
+
+    if 1 in tiers and not cfg.dry_run and not monitoring_configured(cfg):
+        print(
+            "Tier 1 wave disabled: no SENTRY_AUTH_TOKEN or NEW_RELIC_* credentials, "
+            "so the health gate would have no signals.\n"
+        )
+        tiers = [t for t in tiers if t != 1]
 
     total_merged = 0
+    health_watch: list[MergeOutcome] = []
     for tier in tiers:
         wave = _select(decisions, tier)
         label = {0: "Tier 0 (no deploy)", 1: "Tier 1 (health-gated)"}.get(
@@ -69,14 +78,25 @@ def run_bulk(
                 print(f"{head} -> would merge")
                 continue
             try:
-                _merge_and_capture(gh, d, cfg)
+                outcome = _merge_and_capture(gh, d, cfg, now)
                 total_merged += 1
+                if d.action == "merge+health":
+                    health_watch.append(outcome)
                 print(f"{head} -> merged ✓")
+            except PreMergeCheckError as exc:
+                print(f"{head} -> HELD: {exc}")
             except Exception as exc:  # noqa: BLE001
                 print(f"{head} -> FAILED: {exc!r}")
         if wave_pause_s and not cfg.dry_run and tier != tiers[-1]:
             print(f"  pausing {wave_pause_s:.0f}s for Dependabot rebases…")
             time.sleep(wave_pause_s)
+        print()
+
+    if health_watch:
+        from .orchestrator import health_gate_outcomes
+
+        print(f"== Health gate: verifying {len(health_watch)} Tier-1 deploy(s) ==")
+        health_gate_outcomes(gh, health_watch, cfg)
         print()
 
     escalations = [d for d in decisions if d.action == "escalate"]

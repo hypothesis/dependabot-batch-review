@@ -17,7 +17,9 @@ import yaml
 
 
 def _as_bool(value: str | None, default: bool) -> bool:
-    if value is None:
+    # Empty counts as unset: the Action exports DBR_DRY_RUN="" on scheduled runs
+    # so that automation.yml keeps the final say.
+    if value is None or not value.strip():
         return default
     return value.strip().lower() not in {"false", "0", "no", "off"}
 
@@ -53,6 +55,9 @@ class HealthConfig:
     deploy_poll_interval_s: int = 20
     health_window_min: int = 15  # sampling window after deploy settles
     baseline_window_min: int = 60  # pre-deploy comparison window
+    # Wait this long after the deploy settles before sampling, so the window
+    # contains new-release traffic. None => health_window_min.
+    post_deploy_soak_min: int | None = None
     thresholds: Thresholds = field(default_factory=Thresholds)
 
     def sentry_project_for(self, repo: str) -> str:
@@ -120,6 +125,11 @@ def load_config(path: str | None = "automation.yml") -> Config:
         deploy_poll_interval_s=int(health_raw.get("deploy_poll_interval_s", 20)),
         health_window_min=int(health_raw.get("health_window_min", 15)),
         baseline_window_min=int(health_raw.get("baseline_window_min", 60)),
+        post_deploy_soak_min=(
+            int(raw_soak)
+            if (raw_soak := health_raw.get("post_deploy_soak_min")) is not None
+            else None
+        ),
         thresholds=thresholds,
     )
     if "SENTRY_ORG" in os.environ:

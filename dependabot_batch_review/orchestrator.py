@@ -9,12 +9,13 @@ engine stays unit-testable without the health/rollback dependencies.
 from __future__ import annotations
 
 import os
+import sys
 
 from .automation_types import MergeOutcome
 from .config import Config
 from .github_client import GitHubClient
 from .health import check_health
-from .rollback import revert_merge
+from .rollback import RollbackResult, revert_merge
 from .slack_messages import format_rollback, format_tier1_health
 from .slack import SlackClient
 from .triage import triage_pr
@@ -31,9 +32,15 @@ def health_gate_outcomes(
     for outcome in outcomes:
         verdict = check_health(gh, outcome, cfg.health)
 
-        if verdict.healthy:
+        if verdict.healthy or verdict.unknown:
+            # Healthy: report and move on. Unknown: we could not verify (gate
+            # blind / deploy never seen) — escalate to humans, never rollback
+            # on absence of evidence.
+            message = format_tier1_health(outcome, verdict)
             if slack and channel:
-                slack.post_message(channel, format_tier1_health(outcome, verdict))
+                slack.post_message(channel, message)
+            else:
+                print(message, file=sys.stderr)
             continue
 
         triage = triage_pr(outcome.pr)
@@ -49,8 +56,6 @@ def health_gate_outcomes(
                 merge_method=outcome.pr.merge_method,
             )
         else:
-            from .rollback import RollbackResult
-
             rollback = RollbackResult(
                 performed=False,
                 revert_pr_url=None,
@@ -59,7 +64,8 @@ def health_gate_outcomes(
                 dry_run=cfg.dry_run,
             )
 
+        message = format_rollback(outcome, verdict, rollback, triage)
         if slack and channel:
-            slack.post_message(
-                channel, format_rollback(outcome, verdict, rollback, triage)
-            )
+            slack.post_message(channel, message)
+        else:
+            print(message, file=sys.stderr)

@@ -84,4 +84,9 @@ def riskiest_bump(updates: list[DependencyUpdate]) -> BumpKind:
     """
     if not updates:
         return BumpKind.UNKNOWN
-    return max(classify_bump(u.from_version, u.to_version) for u in updates)
+    bumps = [classify_bump(u.from_version, u.to_version) for u in updates]
+    if BumpKind.UNKNOWN in bumps:
+        # UNKNOWN sorts lowest, so max() alone would let a parseable sibling mask
+        # an unparseable update; one unparseable member taints the whole group.
+        return BumpKind.UNKNOWN
+    return max(bumps)

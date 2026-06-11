@@ -27,16 +27,49 @@ from .risk import Classification, classify
 
 # Merge states that mean "not mergeable right now" (conflict, branch protection,
 # behind base, or draft). CLEAN / UNSTABLE / UNKNOWN / null pass (CI is gated
-# separately via check_status).
+# separately via check_status). Checked at merge time via _PREMERGE_QUERY — the
+# org-wide search omits mergeStateStatus (it 502s at that volume), so the field
+# is always None during classification.
 _BLOCKED_MERGE_STATES = frozenset({"DIRTY", "BLOCKED", "BEHIND", "DRAFT"})
 
-_MERGE_INFO_QUERY = """
+# Live re-verification of a single PR immediately before merging. The org-wide
+# search snapshot can be minutes old; everything security-relevant is re-read
+# here: head OID (pinned via expectedHeadOid), commit authorship + signature,
+# CI rollup, merge state, and head-commit age.
+_PREMERGE_QUERY = """
 query($id: ID!) {
   node(id: $id) {
-    ... on PullRequest { merged mergedAt mergeCommit { oid } }
+    ... on PullRequest {
+      state
+      headRefOid
+      mergeStateStatus
+      mergeable
+      commits(last: 1) {
+        totalCount
+        nodes {
+          commit {
+            committedDate
+            statusCheckRollup { state }
+            signature { isValid }
+            author { email }
+          }
+        }
+      }
+    }
   }
 }
 """
+
+_DEPENDABOT_EMAIL_SUFFIX = "dependabot[bot]@users.noreply.github.com"
+
+
+class PreMergeCheckError(Exception):
+    """A PR failed live re-verification just before merging."""
+
+    def __init__(self, reason: str, *, escalate: bool = True) -> None:
+        super().__init__(reason)
+        self.escalate = escalate
+
 
 Action = str  # "merge" | "merge+health" | "escalate" | "skip"
 
@@ -77,15 +110,20 @@ class RunResult:
         return [d for d in self.decisions if d.action == "skip"]
 
 
-def age_days(pr: DependencyUpdatePR, now: datetime) -> float | None:
-    """Age of the PR in days, or ``None`` if the creation time is unknown."""
-    if not pr.created_at:
+def _iso_age_days(timestamp: str | None, now: datetime) -> float | None:
+    """Age in days of an ISO-8601 timestamp, or ``None`` if unparseable."""
+    if not timestamp:
         return None
     try:
-        created = datetime.fromisoformat(pr.created_at.replace("Z", "+00:00"))
+        moment = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
     except ValueError:
         return None
-    return (now - created).total_seconds() / 86400.0
+    return (now - moment).total_seconds() / 86400.0
+
+
+def age_days(pr: DependencyUpdatePR, now: datetime) -> float | None:
+    """Age of the PR in days, or ``None`` if the creation time is unknown."""
+    return _iso_age_days(pr.created_at, now)
 
 
 def _age_or(pr: DependencyUpdatePR, now: datetime, default: float) -> float:
@@ -141,15 +179,92 @@ def decide(
     return Decision(pr, cls, "skip", eligible=False, skip_reason=reason)
 
 
-def _merge_and_capture(
-    gh: GitHubClient, decision: Decision, cfg: Config
-) -> MergeOutcome:
-    """Merge a PR and capture the merge commit SHA for the health/rollback path."""
-    pr = decision.pr
-    merge_pr(gh, pr_id=pr.id, merge_method=pr.merge_method)
-    info = gh.query(_MERGE_INFO_QUERY, variables={"id": pr.id})
+def verify_premerge(
+    gh: GitHubClient, pr: DependencyUpdatePR, cfg: Config, now: datetime
+) -> str:
+    """
+    Re-verify a PR against live GitHub state and return its head OID.
+
+    Raises :class:`PreMergeCheckError` unless the PR is open, consists of exactly
+    one commit authored by Dependabot with a valid (GitHub-made) signature, has a
+    passing CI rollup *now*, is in a mergeable state, and its head commit — not
+    just the PR — satisfies the age floor (a force-pushed new version restarts
+    the quarantine clock).
+    """
+    info = gh.query(_PREMERGE_QUERY, variables={"id": pr.id})
     node = (info or {}).get("node") or {}
-    commit = node.get("mergeCommit") or {}
+    if node.get("state") != "OPEN":
+        raise PreMergeCheckError(
+            f"not open at merge time ({node.get('state') or 'missing'})",
+            escalate=False,
+        )
+
+    commits = node.get("commits") or {}
+    total = commits.get("totalCount") or 0
+    nodes = commits.get("nodes") or []
+    if total != 1 or not nodes:
+        raise PreMergeCheckError(
+            f"expected exactly one Dependabot commit, found {total} "
+            "(manual commits on a Dependabot branch need human review)"
+        )
+    commit = nodes[0].get("commit") or {}
+
+    email = ((commit.get("author") or {}).get("email") or "").lower()
+    if not email.endswith(_DEPENDABOT_EMAIL_SUFFIX):
+        raise PreMergeCheckError(
+            f"head commit not authored by dependabot ({email or 'unknown author'})"
+        )
+    if not (commit.get("signature") or {}).get("isValid"):
+        # Dependabot commits are GitHub-signed; a forged author email can't be.
+        raise PreMergeCheckError("head commit signature missing or invalid")
+
+    rollup = (commit.get("statusCheckRollup") or {}).get("state")
+    if rollup != "SUCCESS":
+        raise PreMergeCheckError(
+            f"CI rollup {rollup or 'missing'} at merge time",
+            escalate=rollup not in (None, "PENDING", "EXPECTED"),
+        )
+
+    if node.get("mergeStateStatus") in _BLOCKED_MERGE_STATES:
+        raise PreMergeCheckError(
+            f"merge state {node.get('mergeStateStatus')}", escalate=False
+        )
+    if node.get("mergeable") == "CONFLICTING":
+        raise PreMergeCheckError("merge conflict")
+
+    head_age = _iso_age_days(commit.get("committedDate"), now)
+    if head_age is None:
+        raise PreMergeCheckError("unknown head commit age")
+    if head_age < cfg.min_age_days:
+        raise PreMergeCheckError(
+            f"head commit too new ({head_age:.1f}d < {cfg.min_age_days}d)",
+            escalate=False,
+        )
+
+    head_oid = node.get("headRefOid")
+    if not head_oid:
+        raise PreMergeCheckError("missing head OID")
+    return str(head_oid)
+
+
+def monitoring_configured(cfg: Config) -> bool:
+    """Is at least one health-gate signal (Sentry or New Relic) credentialed?"""
+    health = cfg.health
+    return bool(
+        health.sentry_token or (health.newrelic_token and health.newrelic_account_id)
+    )
+
+
+def _merge_and_capture(
+    gh: GitHubClient, decision: Decision, cfg: Config, now: datetime | None = None
+) -> MergeOutcome:
+    """Re-verify, merge pinned to the verified head, and capture the merge SHA."""
+    pr = decision.pr
+    head_oid = verify_premerge(gh, pr, cfg, now or datetime.now(timezone.utc))
+    merged = merge_pr(
+        gh, pr_id=pr.id, merge_method=pr.merge_method, expected_head_oid=head_oid
+    )
+    commit = merged.get("mergeCommit") or {}
     return MergeOutcome(
         pr=pr,
         owner=cfg.organization,
@@ -158,33 +273,61 @@ def _merge_and_capture(
         merged=True,
         dry_run=False,
         merge_commit_sha=commit.get("oid"),
-        merged_at=node.get("mergedAt"),
+        merged_at=merged.get("mergedAt"),
     )
+
+
+def gather_decisions(
+    gh: GitHubClient,
+    cfg: Config,
+    now: datetime,
+    repos: list[str] | None = None,
+) -> list[Decision]:
+    """Fetch and classify the org's open Dependabot PRs (shared by all CLIs)."""
+    prs = fetch_dependency_prs(gh, organization=cfg.organization, labels=cfg.labels)
+    if repos:
+        wanted = set(repos)
+        prs = [p for p in prs if p.repo in wanted]
+    cache = DeployModelCache(
+        gh, cfg.organization, publish_on_merge_repos=cfg.publish_on_merge_repos
+    )
+    return [decide(pr, cache, cfg, now) for pr in prs]
 
 
 def run(gh: GitHubClient, cfg: Config, now: datetime | None = None) -> RunResult:
     """Fetch, classify, decide, and (unless dry-run) merge eligible PRs."""
     now = now or datetime.now(timezone.utc)
-    prs = fetch_dependency_prs(gh, organization=cfg.organization, labels=cfg.labels)
-    cache = DeployModelCache(gh, cfg.organization)
-    decisions = [decide(pr, cache, cfg, now) for pr in prs]
+    decisions = gather_decisions(gh, cfg, now)
 
     # Drain safest + oldest first: Tier 0 before Tier 1, then oldest PR first.
     mergeable = [d for d in decisions if d.action in ("merge", "merge+health")]
     mergeable.sort(key=lambda d: (int(d.classification.tier), -_age_or(d.pr, now, 0.0)))
 
+    can_watch_health = monitoring_configured(cfg)
     merged_count = 0
     for d in mergeable:
         if merged_count >= cfg.max_merges_per_run:
             d.action = "skip"
             d.skip_reason = f"max_merges_per_run cap ({cfg.max_merges_per_run}) reached"
             continue
+        if d.action == "merge+health" and not cfg.dry_run and not can_watch_health:
+            # Without Sentry/New Relic credentials the gate would be blind;
+            # refuse the merge rather than deploy unverifiable code.
+            d.action = "skip"
+            d.skip_reason = (
+                "tier 1 needs SENTRY_AUTH_TOKEN or NEW_RELIC_* credentials "
+                "(health gate would have no signals)"
+            )
+            continue
         if cfg.dry_run:
             merged_count += 1  # would merge
             continue
         try:
-            d.outcome = _merge_and_capture(gh, d, cfg)
+            d.outcome = _merge_and_capture(gh, d, cfg, now)
             merged_count += 1
+        except PreMergeCheckError as exc:
+            d.action = "escalate" if exc.escalate else "skip"
+            d.skip_reason = f"pre-merge verification: {exc}"
         except Exception as exc:  # noqa: BLE001 - report and continue the batch
             d.action = "skip"
             d.skip_reason = f"merge failed: {exc!r}"
@@ -270,10 +413,11 @@ def _maybe_run_health_gate(gh: GitHubClient, result: RunResult, cfg: Config) -> 
     """For live Tier-1 merges, verify post-deploy health and roll back on failure."""
     if result.dry_run or not result.health_watch:
         return
-    try:
-        from .orchestrator import health_gate_outcomes
-    except ImportError:
-        return
+    # Imported here (not at module top) only to keep the engine unit-testable
+    # without the health/rollback dependency graph; an import failure is a real
+    # bug and must crash the run, never silently skip the gate.
+    from .orchestrator import health_gate_outcomes
+
     health_gate_outcomes(gh, result.health_watch, cfg)
 
 

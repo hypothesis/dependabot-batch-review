@@ -50,3 +50,13 @@ def test_riskiest_bump_takes_max():
 
 def test_riskiest_bump_empty():
     assert riskiest_bump([]) is BumpKind.UNKNOWN
+
+
+def test_riskiest_bump_unknown_member_taints_group():
+    # UNKNOWN sorts lowest in the IntEnum, so max() alone would mask it; an
+    # unparseable member must make the whole group UNKNOWN (fail-safe).
+    updates = [
+        DependencyUpdate("a", "1.2.3", "1.2.4", ""),
+        DependencyUpdate("b", "garbage", "alsogarbage", ""),
+    ]
+    assert riskiest_bump(updates) == BumpKind.UNKNOWN

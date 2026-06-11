@@ -132,10 +132,10 @@ class DeployModel:
         if pr.package_type == "github_actions":
             # Workflow-file bumps never change the deployed artifact.
             return False
-        return any(
-            self.path_triggers_deploy(path)
-            for path in self.infer_changed_paths(pr, is_dev_tool)
-        )
+        # Prefer the PR's real changed files; the ecosystem inference is only a
+        # fallback for PRs fetched without the files connection.
+        paths = pr.changed_files or self.infer_changed_paths(pr, is_dev_tool)
+        return any(self.path_triggers_deploy(path) for path in paths)
 
 
 def parse_deploy_yaml(repo: str, text: str | None) -> DeployModel:
@@ -161,7 +161,19 @@ def parse_deploy_yaml(repo: str, text: str | None) -> DeployModel:
 
     # YAML 1.1 parses the bare key `on:` as the boolean True, so check both.
     on_section = data.get("on", data.get(True))
-    push = on_section.get("push") if isinstance(on_section, dict) else None
+
+    # A push trigger can be spelled `on: push`, `on: [push]`, a bare `push:` key,
+    # or a `push:` mapping. All forms without a `branches:` filter fire on every
+    # branch — including main — so they must count as deploying (fail-safe).
+    push: Any = None
+    push_present = False
+    if isinstance(on_section, str):
+        push_present = on_section == "push"
+    elif isinstance(on_section, list):
+        push_present = "push" in on_section
+    elif isinstance(on_section, dict):
+        push_present = "push" in on_section
+        push = on_section.get("push")
 
     branches: list[str] = []
     paths_ignore: list[str] = []
@@ -173,7 +185,10 @@ def parse_deploy_yaml(repo: str, text: str | None) -> DeployModel:
         if isinstance(raw_ignore, list):
             paths_ignore = [str(p) for p in raw_ignore]
 
-    deploying = any(b in _DEPLOY_BRANCHES for b in branches)
+    if push_present and not branches:
+        deploying = True
+    else:
+        deploying = any(b in _DEPLOY_BRANCHES for b in branches)
     return DeployModel(
         repo=repo,
         is_deploying_service=deploying,
@@ -186,14 +201,27 @@ def parse_deploy_yaml(repo: str, text: str | None) -> DeployModel:
 class DeployModelCache:
     """Fetches and memoizes the :class:`DeployModel` for each repo in an org."""
 
-    def __init__(self, gh: GitHubClient, organization: str) -> None:
+    def __init__(
+        self,
+        gh: GitHubClient,
+        organization: str,
+        publish_on_merge_repos: list[str] | None = None,
+    ) -> None:
         self._gh = gh
         self._organization = organization
+        self._publish_on_merge = frozenset(publish_on_merge_repos or [])
         self._cache: dict[str, DeployModel] = {}
 
     def get(self, repo: str) -> DeployModel:
         if repo not in self._cache:
-            self._cache[repo] = self._fetch(repo)
+            if repo in self._publish_on_merge:
+                # npm-publishing libs ship on merge despite having no deploy.yml;
+                # treat every bump as production-deploying (Tier 1).
+                self._cache[repo] = DeployModel(
+                    repo=repo, is_deploying_service=True, raw_present=False
+                )
+            else:
+                self._cache[repo] = self._fetch(repo)
         return self._cache[repo]
 
     def _fetch(self, repo: str) -> DeployModel:

@@ -112,14 +112,18 @@ class SentryClient:
 def sample_sentry(
     client: SentryClient, config: HealthConfig, repo: str
 ) -> SignalResult:
-    project = client.resolve_project_id(config.sentry_project_for(repo))
     window = config.health_window_min
     thresholds = config.thresholds
     try:
+        project = client.resolve_project_id(config.sentry_project_for(repo))
         new_issues = client.new_issues(project, window)
         crash_free = client.crash_free_rate(project, window)
     except requests.RequestException as exc:
-        return SignalResult("sentry", True, "sentry", detail=f"query failed: {exc}")
+        # Fail closed: an unreachable monitor is an UNVERIFIED deploy, not a
+        # healthy one (expired token, rate limit, Sentry outage).
+        return SignalResult(
+            "sentry", False, "sentry", detail=f"query failed: {exc}", unknown=True
+        )
 
     issues_ok = new_issues < thresholds.new_issue_fail_count
     crash_ok = crash_free is None or crash_free >= thresholds.min_crash_free_pct
@@ -208,10 +212,16 @@ def sample_newrelic(
         )
         post_count = client.error_count(app, window)
     except requests.RequestException as exc:
-        return SignalResult("newrelic", True, "newrelic", detail=f"query failed: {exc}")
+        return SignalResult(
+            "newrelic", False, "newrelic", detail=f"query failed: {exc}", unknown=True
+        )
 
     if post_rate is None:
-        return SignalResult("newrelic", True, "newrelic", detail="no data")
+        # No transaction data for the app name almost always means a config
+        # mismatch, not a healthy idle service — treat as unverifiable.
+        return SignalResult(
+            "newrelic", False, "newrelic", detail="no data", unknown=True
+        )
 
     baseline = baseline_rate or 0.0
     ceiling = baseline * (1.0 + thresholds.error_delta_pct / 100.0)
@@ -289,26 +299,59 @@ def check_health(
             healthy=False,
             reasons=[f"production deploy failed ({deploy.log_url or 'no log'})"],
         )
+    if deploy.state in ("timeout", "none"):
+        # We never saw the new code go live; sampling now would measure the OLD
+        # release and pass vacuously. Cannot verify -> escalate, don't guess.
+        why = (
+            "deploy did not settle within timeout"
+            if deploy.state == "timeout"
+            else "no merge commit SHA / no Production deployment found"
+        )
+        return HealthVerdict(
+            healthy=False, reasons=[f"{why}; health not verifiable"], unknown=True
+        )
+
+    has_sentry = bool(config.sentry_token)
+    has_newrelic = bool(config.newrelic_token and config.newrelic_account_id)
+    if not (has_sentry or has_newrelic):
+        return HealthVerdict(
+            healthy=False,
+            reasons=["no monitoring signals configured; health not verifiable"],
+            unknown=True,
+        )
+
+    # Soak so the sampling window contains post-deploy traffic; without this the
+    # backwards-looking windows would mostly measure the previous release.
+    soak_min = (
+        config.health_window_min
+        if config.post_deploy_soak_min is None
+        else config.post_deploy_soak_min
+    )
+    if soak_min > 0:
+        sleep(soak_min * 60)
 
     signals: dict[str, SignalResult] = {}
-    if config.sentry_token:
+    if has_sentry and config.sentry_token:
         signals["sentry"] = sample_sentry(
             SentryClient(config.sentry_token, config.sentry_org), config, outcome.repo
         )
-    if config.newrelic_token and config.newrelic_account_id:
+    if has_newrelic and config.newrelic_token and config.newrelic_account_id:
         signals["newrelic"] = sample_newrelic(
             NewRelicClient(config.newrelic_token, int(config.newrelic_account_id)),
             config,
             outcome.repo,
         )
 
-    reasons: list[str] = []
-    if deploy.state == "timeout":
-        reasons.append("deploy did not settle within timeout (sampled anyway)")
+    reasons = [
+        f"{signal.source}: {signal.detail}"
+        for signal in signals.values()
+        if not signal.healthy
+    ]
+    # Hard evidence of degradation outranks an unverifiable sibling signal;
+    # otherwise any unknown signal makes the whole verdict unknown.
+    degraded = any(not s.healthy and not s.unknown for s in signals.values())
+    unknown = not degraded and any(s.unknown for s in signals.values())
     healthy = all(signal.healthy for signal in signals.values())
-    for signal in signals.values():
-        if not signal.healthy:
-            reasons.append(f"{signal.source}: {signal.detail}")
-    if not signals:
-        reasons.append("no monitoring signals configured")
-    return HealthVerdict(healthy=healthy, signals=signals, reasons=reasons)
+    return HealthVerdict(
+        healthy=healthy, signals=signals, reasons=reasons, unknown=unknown
+    )

@@ -64,3 +64,11 @@ def test_missing_file_uses_defaults():
     assert cfg.dry_run is True
     assert cfg.min_age_days == 3
     assert cfg.tiers_enabled == [0]
+
+
+def test_dry_run_empty_env_var_is_unset(tmp_path, monkeypatch):
+    # The scheduled Action exports DBR_DRY_RUN="" so automation.yml decides.
+    path = tmp_path / "automation.yml"
+    path.write_text("dry_run: false\n")
+    monkeypatch.setenv("DBR_DRY_RUN", "")
+    assert load_config(str(path)).dry_run is False

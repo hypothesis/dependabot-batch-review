@@ -47,12 +47,22 @@ class SignalResult:
     baseline: float | None = None
     threshold: float | None = None
     detail: str = ""
+    # The signal could not be sampled (API error, no data). Never counts as
+    # healthy; whether it triggers rollback or escalation is decided above.
+    unknown: bool = False
 
 
 @dataclass
 class HealthVerdict:
-    """Aggregate verdict from all monitoring signals after a Tier-1 deploy."""
+    """
+    Aggregate verdict from all monitoring signals after a Tier-1 deploy.
+
+    Three-state: ``healthy`` (verified good), degraded (``healthy=False,
+    unknown=False`` — roll back), or ``unknown=True`` (could not verify —
+    escalate to humans, never auto-pass and never auto-rollback).
+    """
 
     healthy: bool
     signals: dict[str, SignalResult] = field(default_factory=dict)
     reasons: list[str] = field(default_factory=list)
+    unknown: bool = False

@@ -158,11 +158,82 @@ def test_check_health_deploy_failure_is_unhealthy():
     assert verdict.healthy is False
 
 
-def test_check_health_no_signals_configured():
+def test_check_health_no_signals_configured_is_unknown():
     gh = _FakeGH(["SUCCESS"])
     now, sleep = _clock()
     cfg = HealthConfig(deploy_poll_interval_s=1, deploy_wait_timeout_s=10)
     verdict = check_health(gh, _outcome(), cfg, now=now, sleep=sleep)
-    # No tokens => no signals => healthy by default, with an explanatory reason.
-    assert verdict.healthy is True
+    # No tokens => no signals => the gate cannot verify anything. Fail closed:
+    # not healthy, flagged unknown (escalate to humans, no auto-rollback).
+    assert verdict.healthy is False
+    assert verdict.unknown is True
     assert any("no monitoring signals" in r for r in verdict.reasons)
+
+
+@responses.activate
+def test_sentry_api_error_is_unknown_not_healthy():
+    responses.add(
+        responses.GET, f"{SENTRY}/organizations/hypothesis/projects/", status=401
+    )
+    cfg = HealthConfig(sentry_org="hypothesis", sentry_token="expired")
+    signal = sample_sentry(SentryClient("expired", "hypothesis"), cfg, "bouncer")
+    assert signal.healthy is False
+    assert signal.unknown is True
+
+
+@responses.activate
+def test_newrelic_api_error_is_unknown_not_healthy():
+    responses.add(responses.POST, NR, status=500)
+    cfg = HealthConfig(newrelic_token="t", newrelic_account_id="1")
+    signal = sample_newrelic(NewRelicClient("t", 1), cfg, "bouncer")
+    assert signal.healthy is False
+    assert signal.unknown is True
+
+
+@responses.activate
+def test_newrelic_no_data_is_unknown():
+    responses.add(responses.POST, NR, json=_nr([]))
+    cfg = HealthConfig(newrelic_token="t", newrelic_account_id="1")
+    signal = sample_newrelic(NewRelicClient("t", 1), cfg, "bouncer")
+    assert signal.healthy is False
+    assert signal.unknown is True
+
+
+def test_check_health_deploy_timeout_is_unknown_without_sampling():
+    gh = _FakeGH(["IN_PROGRESS"])
+    now, sleep = _clock()
+    cfg = HealthConfig(
+        deploy_poll_interval_s=1, deploy_wait_timeout_s=3, sentry_token="t"
+    )
+    verdict = check_health(gh, _outcome(), cfg, now=now, sleep=sleep)
+    # Old release would be measured; the gate must not claim healthy.
+    assert verdict.healthy is False
+    assert verdict.unknown is True
+    assert verdict.signals == {}
+
+
+@responses.activate
+def test_check_health_soaks_before_sampling():
+    responses.add(
+        responses.GET,
+        f"{SENTRY}/organizations/hypothesis/projects/",
+        json=[{"slug": "bouncer", "id": "42"}],
+    )
+    responses.add(responses.GET, f"{SENTRY}/organizations/hypothesis/issues/", json=[])
+    responses.add(
+        responses.GET,
+        f"{SENTRY}/organizations/hypothesis/sessions/",
+        json={"groups": [{"totals": {"crash_free_rate(session)": 1.0}}]},
+    )
+    gh = _FakeGH(["SUCCESS"])
+    now, _ = _clock()
+    sleeps: list[float] = []
+    cfg = HealthConfig(
+        deploy_poll_interval_s=1,
+        deploy_wait_timeout_s=10,
+        sentry_token="t",
+        post_deploy_soak_min=2,
+    )
+    verdict = check_health(gh, _outcome(), cfg, now=now, sleep=sleeps.append)
+    assert verdict.healthy is True
+    assert 120 in sleeps  # soaked 2 minutes after the deploy settled

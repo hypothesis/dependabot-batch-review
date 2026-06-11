@@ -168,7 +168,7 @@ Generate a spreadsheet report of Dependabot PRs:
 Generate a Markdown report:
 
 ```sh
-./review.sh hypothesis --output-md
+./review.sh hypothesis --output-md report.md
 ```
 
 ### Launch the Dashboard
@@ -210,8 +210,12 @@ poetry run python -m dependabot_batch_review.automerge hypothesis
 # Burn down the whole backlog in waves (Tier 0 first)
 poetry run python -m dependabot_batch_review.bulk hypothesis --dry-run --tier 0
 
-# Local curses monitor of the sweep
+# Local curses monitor of the sweep (dry-run plan by default)
 poetry run python -m dependabot_batch_review.monitor hypothesis
+
+# Live TUI sweep: merge Tier 0/1, health-gate, auto-rollback. Writes a JSONL
+# audit trail (sweep-audit-<timestamp>.jsonl; override with --audit-log).
+poetry run python -m dependabot_batch_review.monitor hypothesis --execute
 ```
 
 The daily run ships as a GitHub Action in
