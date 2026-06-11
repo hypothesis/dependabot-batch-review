@@ -237,3 +237,25 @@ def test_check_health_soaks_before_sampling():
     verdict = check_health(gh, _outcome(), cfg, now=now, sleep=sleeps.append)
     assert verdict.healthy is True
     assert 120 in sleeps  # soaked 2 minutes after the deploy settled
+
+
+@responses.activate
+def test_newrelic_zero_baseline_single_error_is_not_a_spike():
+    # baseline ~0 => the relative spike check is meaningless; only the absolute
+    # error floor applies. One error on a low-traffic service must not roll back.
+    responses.add(responses.POST, NR, json=_nr([{"rate": 1.5}]))  # post window
+    responses.add(responses.POST, NR, json=_nr([{"rate": 0.0}]))  # baseline
+    responses.add(responses.POST, NR, json=_nr([{"c": 1}]))  # error count
+    cfg = HealthConfig(newrelic_token="k", newrelic_account_id="1")
+    signal = sample_newrelic(NewRelicClient("k", 1), cfg, "bouncer")
+    assert signal.healthy is True
+
+
+@responses.activate
+def test_newrelic_zero_baseline_many_errors_fails():
+    responses.add(responses.POST, NR, json=_nr([{"rate": 5.0}]))
+    responses.add(responses.POST, NR, json=_nr([{"rate": 0.0}]))
+    responses.add(responses.POST, NR, json=_nr([{"c": 50}]))
+    cfg = HealthConfig(newrelic_token="k", newrelic_account_id="1")
+    signal = sample_newrelic(NewRelicClient("k", 1), cfg, "bouncer")
+    assert signal.healthy is False

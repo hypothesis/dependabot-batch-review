@@ -72,3 +72,10 @@ def test_dry_run_empty_env_var_is_unset(tmp_path, monkeypatch):
     path.write_text("dry_run: false\n")
     monkeypatch.setenv("DBR_DRY_RUN", "")
     assert load_config(str(path)).dry_run is False
+
+
+def test_dry_run_null_yaml_stays_fail_safe(tmp_path):
+    # `dry_run:` (null) must not flip dry-run off (bool(None) would).
+    path = tmp_path / "automation.yml"
+    path.write_text("dry_run:\n")
+    assert load_config(str(path)).dry_run is True

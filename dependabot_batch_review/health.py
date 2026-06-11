@@ -225,8 +225,12 @@ def sample_newrelic(
 
     baseline = baseline_rate or 0.0
     ceiling = baseline * (1.0 + thresholds.error_delta_pct / 100.0)
-    spiked = post_rate > ceiling and post_rate > 0.0
-    cold_start = baseline <= 0.01 and post_count >= thresholds.nr_error_count_abs
+    # The relative spike check only makes sense against real baseline traffic;
+    # with baseline ~0 the ceiling is 0 and a single error would read as a
+    # spike. Low/no-traffic services are judged by the absolute error floor.
+    near_zero_baseline = baseline <= 0.01
+    spiked = not near_zero_baseline and post_rate > ceiling
+    cold_start = near_zero_baseline and post_count >= thresholds.nr_error_count_abs
     healthy = not (spiked or cold_start)
     return SignalResult(
         source="newrelic",

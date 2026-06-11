@@ -24,6 +24,16 @@ def _as_bool(value: str | None, default: bool) -> bool:
     return value.strip().lower() not in {"false", "0", "no", "off"}
 
 
+def _yaml_bool(value: Any, default: bool) -> bool:
+    # Fail-safe YAML bool: `dry_run:` (null) or a garbage value must keep the
+    # default; bool(None) would silently flip dry_run off.
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return _as_bool(str(value), default)
+
+
 def _as_int(value: str | None, default: int) -> int:
     if value is None:
         return default
@@ -138,7 +148,7 @@ def load_config(path: str | None = "automation.yml") -> Config:
     config = Config(
         organization=str(raw.get("organization", "hypothesis")),
         min_age_days=int(raw.get("min_age_days", 3)),
-        dry_run=bool(raw.get("dry_run", True)),
+        dry_run=_yaml_bool(raw.get("dry_run"), True),
         tiers_enabled=[int(t) for t in raw.get("tiers_enabled", [0])],
         repo_allow=[str(r) for r in raw.get("repo_allow", [])],
         repo_deny=[str(r) for r in raw.get("repo_deny", [])],
