@@ -21,7 +21,7 @@ PyYAML = "^6.0"
 mypy = "^1.8.0"
 types-requests = "^2.31.0.20240218"
 types-PyYAML = "^6.0"
-pytest = "^8.0"
+pytest = ">=8,<10"
 responses = "^0.25"
 pytest-mock = "^3.12"
 
