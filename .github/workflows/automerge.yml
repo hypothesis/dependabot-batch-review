@@ -3,8 +3,11 @@ name: Dependabot auto-merge
 # Daily autonomous Dependabot auto-merger. Runs DRY-RUN by default; merging
 # requires DBR_DRY_RUN=false AND a merge-capable token (see the token note below).
 on:
-  schedule:
-    - cron: "0 7 * * 1-5" # 07:00 UTC, weekdays (avoid weekend deploys / no on-call)
+  # Daily schedule DISABLED for now — running manual TUI sweeps first
+  # (`python -m dependabot_batch_review.monitor hypothesis --execute`).
+  # Re-enable by uncommenting the two lines below.
+  # schedule:
+  #   - cron: "0 7 * * 1-5" # 07:00 UTC, weekdays (avoid weekend deploys / no on-call)
   workflow_dispatch:
     inputs:
       dry_run:
