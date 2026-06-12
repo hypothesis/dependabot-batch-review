@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any, Optional, TextIO, Union
 
 from blessings import Terminal  # type: ignore
-from bs4 import BeautifulSoup, PageElement, Tag
+from bs4 import BeautifulSoup, PageElement
 from openpyxl import load_workbook  # type: ignore[import-untyped]
 from dataclasses import dataclass, field as dataclass_field
 from enum import Enum
@@ -55,13 +55,13 @@ class OutputWriter:
     def write_list_item(self, text: str, indent_level: int = 0) -> None:
         prefix = "  " * indent_level + "- "
         if self._file_handle:
-            self._file_handle.write(f"{prefix}{{text}}\n")
+            self._file_handle.write(f"{prefix}{text}\n")
         else:
-            self.write(f"{prefix}{{text}}")
+            self.write(f"{prefix}{text}")
 
     def write_code_block(self, code: str, lang: str = "") -> None:
         if self._file_handle:
-            self._file_handle.write(f"```\n{lang}\n{code}\n```\n")
+            self._file_handle.write(f"```{lang}\n{code}\n```\n")
         else:
             self.write(code)
 
@@ -111,6 +111,17 @@ class DependencyUpdatePR:
     advisory_summary: Optional[str] = None
     advisory_url: Optional[str] = None
     reviewers: list[str] = dataclass_field(default_factory=list)
+    # Fields used by the autonomous auto-merge layer (automerge/risk/health).
+    # All optional with defaults so existing call sites are unaffected.
+    created_at: Optional[str] = None
+    merge_state_status: Optional[str] = None
+    mergeable: Optional[str] = None
+    head_ref_name: Optional[str] = None
+    number: Optional[int] = None
+    repo: Optional[str] = None
+    # Real changed paths from the PR (empty when not fetched / truncated, in
+    # which case the deploy model falls back to ecosystem inference).
+    changed_files: list[str] = dataclass_field(default_factory=list)
 
 
 @dataclass
@@ -127,18 +138,15 @@ class RiskAssessment:
 
 
 def analyze_risk(pr: DependencyUpdatePR) -> RiskAssessment:
+    # Local import: semver imports DependencyUpdate from this module.
+    from .semver import BumpKind, classify_bump
+
     reasons = []
     level = "Low"
 
     for u in pr.updates:
         if u.from_version and u.to_version:
-            from_parts = u.from_version.split(".")
-            to_parts = u.to_version.split(".")
-            if (
-                len(from_parts) > 0
-                and len(to_parts) > 0
-                and from_parts[0] != to_parts[0]
-            ):
+            if classify_bump(u.from_version, u.to_version) == BumpKind.MAJOR:
                 level = "High"
                 reasons.append(
                     f"Major version bump from {u.from_version} to {u.to_version}"
@@ -183,31 +191,6 @@ def map_risk_to_priority(risk_level: str) -> str:
         return "P2"
     else:
         return "P3"
-
-
-def _extract_ghsa_details(
-    soup: BeautifulSoup,
-) -> tuple[Optional[str], Optional[str], Optional[str]]:
-    ghsa_id = None
-    advisory_summary = None
-    advisory_url = None
-
-    details_element = soup.find(
-        "details", id=lambda x: x and x.startswith("ghsa-details-")
-    )
-    if isinstance(details_element, Tag):
-        ghsa_id_element = details_element.find(
-            "a", href=lambda x: x and "github.com/advisories" in x
-        )
-        if isinstance(ghsa_id_element, Tag):
-            ghsa_id = ghsa_id_element.text.strip()
-            advisory_url = str(ghsa_id_element["href"])
-
-        summary_element = details_element.find("summary")
-        if isinstance(summary_element, Tag):
-            advisory_summary = summary_element.text.strip()
-
-    return ghsa_id, advisory_summary, advisory_url
 
 
 def parse_dependabot_pr(title: str, body: str) -> DependencyUpdateDetails:
@@ -322,10 +305,13 @@ def fetch_dependency_prs(
 
             author { login }
             id
+            number
             title
             bodyHTML
             headRefName
             reviewDecision
+            createdAt
+            mergeable
             url
 
             assignees(first: 10) {
@@ -349,6 +335,11 @@ def fetch_dependency_prs(
                 }
               }
             }
+
+            files(first: 100) {
+              totalCount
+              nodes { path }
+            }
           }
         }
       }
@@ -357,6 +348,10 @@ def fetch_dependency_prs(
 
     label_terms = " ".join(f"label:{label}" for label in labels)
     query = f"org:{organization} {label_terms} is:pr is:open author:app/dependabot"
+    # NB: we intentionally do not request `mergeStateStatus` here. It is a preview
+    # field that 502s when computed for ~100 PRs org-wide in one search; `mergeable`
+    # (GA) is enough to detect conflicts, and a blocked/behind PR simply fails the
+    # merge attempt, which the engine catches and skips.
     result = gh.query(query=dependencies_query, variables={"query": query})
     pull_requests = result["search"]["nodes"]
 
@@ -374,12 +369,6 @@ def fetch_dependency_prs(
                 "statusCheckRollup"
             ]
             package_type = parse_package_type_from_branch_name(pr["headRefName"])
-
-            soup = BeautifulSoup(pr["bodyHTML"], "html.parser")
-            ghsa_id, advisory_summary, advisory_url = _extract_ghsa_details(
-                soup
-            )  # This will now return None, None, None
-
         except ValueError as exc:
             print(f"Failed to parse details from {pr['url']}: {exc}", file=sys.stderr)
             continue
@@ -407,14 +396,34 @@ def fetch_dependency_prs(
                 merge_method=pr["repository"]["viewerDefaultMergeMethod"],
                 package_type=package_type,
                 url=pr["url"],
-                ghsa_id=ghsa_id,
-                advisory_summary=advisory_summary,
-                advisory_url=advisory_url,
                 reviewers=_extract_reviewers(pr),
+                created_at=pr.get("createdAt"),
+                merge_state_status=pr.get("mergeStateStatus"),
+                mergeable=pr.get("mergeable"),
+                head_ref_name=pr.get("headRefName"),
+                number=pr.get("number"),
+                repo=pr["repository"]["name"],
+                changed_files=_extract_changed_files(pr),
             )
         )
 
     return updates
+
+
+def _extract_changed_files(pr: dict[str, Any]) -> list[str]:
+    """
+    The PR's real changed paths, or ``[]`` when unavailable or truncated.
+
+    An empty list makes the deploy model fall back to its conservative
+    ecosystem-based inference, so truncation can only widen the safety net.
+    """
+    files = pr.get("files") or {}
+    nodes = files.get("nodes") or []
+    paths = [str(n["path"]) for n in nodes if n and n.get("path")]
+    total = files.get("totalCount")
+    if total is not None and total > len(paths):
+        return []
+    return paths
 
 
 def _extract_reviewers(pr: dict[str, Any]) -> list[str]:
@@ -439,20 +448,38 @@ def _extract_reviewers(pr: dict[str, Any]) -> list[str]:
     return unique
 
 
-def merge_pr(gh: GitHubClient, pr_id: str, merge_method: str = "MERGE") -> None:
+def merge_pr(
+    gh: GitHubClient,
+    pr_id: str,
+    merge_method: str = "MERGE",
+    expected_head_oid: Optional[str] = None,
+) -> dict[str, Any]:
+    """
+    Merge a PR and return the mutation's ``pullRequest`` payload.
+
+    ``expected_head_oid`` makes GitHub refuse the merge if the branch head moved
+    after we verified it (closes the classify-then-merge TOCTOU window). The
+    merge commit SHA is returned in the payload so callers need no follow-up
+    query — a failure after this point can no longer mislabel a merged PR.
+    """
     merge_query = """
     mutation mergePullRequest($input: MergePullRequestInput!) {
       mergePullRequest(input: $input) {
         pullRequest {
           merged
+          mergedAt
           url
+          mergeCommit { oid }
         }
       }
     }
     """
-    gh.query(
-        merge_query, {"input": {"pullRequestId": pr_id, "mergeMethod": merge_method}}
-    )
+    merge_input: dict[str, Any] = {"pullRequestId": pr_id, "mergeMethod": merge_method}
+    if expected_head_oid:
+        merge_input["expectedHeadOid"] = expected_head_oid
+    result = gh.query(merge_query, {"input": merge_input})
+    pull_request = ((result or {}).get("mergePullRequest") or {}).get("pullRequest")
+    return pull_request if isinstance(pull_request, dict) else {}
 
 
 class PromptAbortError(Exception):
@@ -499,19 +526,19 @@ def get_package_diff(package_type: str, update: DependencyUpdate) -> str | None:
                     "--diff",
                     f"{update.name}@{update.to_version}",
                 ]
-                print(f"Running command: {{{' '.join(cmd)}}}")
+                print(f"Running command: {' '.join(cmd)}")
                 sys.stdout.flush()
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
                 if result.returncode == 0:
                     return result.stdout
                 else:
-                    return f"Error running npm diff: {{{result.stderr}}}"
+                    return f"Error running npm diff: {result.stderr}"
             except subprocess.TimeoutExpired:
                 return "Error: npm diff command timed out"
             except FileNotFoundError:
                 return "Error: npm command not found. Please ensure npm is installed and in your PATH."
             except Exception as e:
-                return f"Error running npm diff: {{{str(e)}}}"
+                return f"Error running npm diff: {str(e)}"
         case _:
             return None
 
@@ -586,7 +613,7 @@ def review_updates(
                 prs_by_group_name[pr.group_name].append(pr)
 
             for group_name, group_prs in prs_by_group_name.items():
-                output_writer.write_heading(1, f"Dependency: {{{group_name}}}")
+                output_writer.write_heading(1, f"Dependency: {group_name}")
 
                 prs_by_version: dict[str, list[DependencyUpdatePR]] = {}
                 for pr in group_prs:
@@ -605,34 +632,34 @@ def review_updates(
                     prs_by_version[version_key].append(pr)
 
                 for version_key, version_prs in prs_by_version.items():
-                    output_writer.write_heading(2, f"Version: {{{version_key}}}")
+                    output_writer.write_heading(2, f"Version: {version_key}")
 
                     for pr in version_prs:
-                        output_writer.write_heading(3, f"PR: {{{pr.url}}}")
+                        output_writer.write_heading(3, f"PR: {pr.url}")
 
                         risk = analyze_risk(pr)
                         output_writer.write_heading(4, "Risk Analysis")
-                        output_writer.write(f"**Level:** {{{risk.level}}}")
+                        output_writer.write(f"**Level:** {risk.level}")
                         output_writer.write("**Reasons:**")
                         for reason in risk.reasons:
                             output_writer.write_list_item(reason)
                         output_writer.write("")
 
                         output_writer.write(
-                            f"**CI Status:** {{{pr.check_status.description}}}"
+                            f"**CI Status:** {pr.check_status.description}"
                         )
                         output_writer.write("")
 
                         for u in pr.updates:
                             if u.notes:
                                 output_writer.write_heading(
-                                    4, f"Release Notes for {{{u.name}}}"
+                                    4, f"Release Notes for {u.name}"
                                 )
                                 output_writer.write_code_block(u.notes)
 
                         for u in pr.updates:
                             if diff_output := get_package_diff(pr.package_type, u):
-                                output_writer.write_heading(4, f"Diff for {{{u.name}}}")
+                                output_writer.write_heading(4, f"Diff for {u.name}")
                                 output_writer.write_code_block(diff_output, lang="diff")
 
             return

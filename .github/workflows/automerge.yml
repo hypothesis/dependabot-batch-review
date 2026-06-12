@@ -1,0 +1,60 @@
+name: Dependabot auto-merge
+
+# Daily autonomous Dependabot auto-merger. Runs DRY-RUN by default; merging
+# requires DBR_DRY_RUN=false AND a merge-capable token (see the token note below).
+on:
+  # Daily schedule DISABLED for now — running manual TUI sweeps first
+  # (`python -m dependabot_batch_review.monitor hypothesis --execute`).
+  # Re-enable by uncommenting the two lines below.
+  # schedule:
+  #   - cron: "0 7 * * 1-5" # 07:00 UTC, weekdays (avoid weekend deploys / no on-call)
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (no merges)"
+        type: boolean
+        default: true
+
+# The *workflow's* GITHUB_TOKEN stays read-only; merges use the dedicated token
+# below so the merge push re-triggers each repo's CI + deploy workflows.
+permissions:
+  contents: read
+
+concurrency:
+  group: dependabot-automerge
+  cancel-in-progress: false
+
+jobs:
+  automerge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Poetry
+        run: pipx install poetry
+
+      - name: Install dependencies
+        run: poetry install --only main
+
+      - name: Run auto-merger
+        env:
+          # IMPORTANT: do NOT use secrets.GITHUB_TOKEN here — a push by that token
+          # does not trigger downstream workflows, so a Tier-1 merge would land
+          # without deploying. Provision a GitHub App / fine-grained PAT with
+          # contents:write + pull_requests:write as DEPENDABOT_AUTOMERGE_TOKEN.
+          GITHUB_TOKEN: ${{ secrets.DEPENDABOT_AUTOMERGE_TOKEN }}
+          SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}
+          SLACK_CHANNEL: ${{ vars.DEPSBOT_SLACK_CHANNEL }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          NEW_RELIC_API_KEY: ${{ secrets.NEW_RELIC_API_KEY }}
+          NEW_RELIC_ACCOUNT_ID: ${{ vars.NEW_RELIC_ACCOUNT_ID }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Manual dispatch overrides dry-run explicitly; scheduled runs leave the
+          # variable empty so automation.yml decides (env would otherwise always win).
+          DBR_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && (inputs.dry_run && 'true' || 'false') || '' }}
+        run: poetry run python -m dependabot_batch_review.automerge hypothesis

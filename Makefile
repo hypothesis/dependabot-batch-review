@@ -1,7 +1,11 @@
 .PHONY: qa
-qa: checkformat typecheck lint
+qa: checkformat typecheck lint test
 
 PYTHON_SRCS=dependabot_batch_review
+
+.PHONY: test
+test:
+	poetry run pytest -q
 
 .PHONY: checkformat
 checkformat:

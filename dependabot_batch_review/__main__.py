@@ -93,7 +93,19 @@ def main() -> int:
 
     if args.output_xlsx:
         try:
-            template_path = Path("./hypothesis_dependabot_alerts_tracker_example.xlsx")
+            # The template ships next to the repo, not the cwd. (It is gitignored
+            # via *.xlsx, so a fresh clone needs it provided.)
+            template_path = (
+                Path(__file__).resolve().parent.parent
+                / "hypothesis_dependabot_alerts_tracker_example.xlsx"
+            )
+            if not template_path.exists():
+                print(
+                    f"XLSX template not found: {template_path} — place the tracker "
+                    "template there to enable --output-xlsx",
+                    file=sys.stderr,
+                )
+                return 1
             output_path = Path(args.output_xlsx)
             generate_xlsx_report(updates, template_path, output_path)
         except Exception as e:
