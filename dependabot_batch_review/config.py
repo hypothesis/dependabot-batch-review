@@ -51,6 +51,9 @@ class Thresholds:
     min_crash_free_pct: float = 99.0  # Sentry release-health floor
     new_issue_fail_count: int = 1  # >= this many brand-new issues fails
     nr_error_count_abs: int = 5  # absolute error floor when baseline traffic ~0
+    # Missing Sentry session data counts as unverifiable (fail closed). Set
+    # False for repos that don't report sessions, so new-issues alone decides.
+    require_crash_free: bool = True
 
 
 @dataclass
@@ -123,6 +126,7 @@ def load_config(path: str | None = "automation.yml") -> Config:
         min_crash_free_pct=float(thresholds_raw.get("min_crash_free_pct", 99.0)),
         new_issue_fail_count=int(thresholds_raw.get("new_issue_fail_count", 1)),
         nr_error_count_abs=int(thresholds_raw.get("nr_error_count_abs", 5)),
+        require_crash_free=_yaml_bool(thresholds_raw.get("require_crash_free"), True),
     )
     health = HealthConfig(
         sentry_org=str(health_raw.get("sentry_org", "hypothesis")),

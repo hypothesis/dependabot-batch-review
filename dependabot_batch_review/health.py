@@ -126,16 +126,39 @@ def sample_sentry(
         )
 
     issues_ok = new_issues < thresholds.new_issue_fail_count
-    crash_ok = crash_free is None or crash_free >= thresholds.min_crash_free_pct
-    healthy = issues_ok and crash_ok
     crash_str = f"{crash_free:.2f}%" if crash_free is not None else "n/a"
+    detail = f"crash-free {crash_str}, {new_issues} new issue(s)"
+
+    if not issues_ok:
+        # New issues are hard evidence of degradation regardless of crash data.
+        return SignalResult(
+            source="sentry",
+            healthy=False,
+            metric="new issues / crash-free",
+            observed=float(new_issues),
+            threshold=float(thresholds.new_issue_fail_count),
+            detail=detail,
+        )
+    if crash_free is None and thresholds.require_crash_free:
+        # Fail closed: sessions not reporting means the crash-free floor was
+        # never checked. Repos without session tracking can opt out via
+        # thresholds.require_crash_free.
+        return SignalResult(
+            "sentry",
+            False,
+            "new issues / crash-free",
+            observed=float(new_issues),
+            detail=f"{detail} — sessions not reporting",
+            unknown=True,
+        )
+    healthy = crash_free is None or crash_free >= thresholds.min_crash_free_pct
     return SignalResult(
         source="sentry",
         healthy=healthy,
         metric="new issues / crash-free",
         observed=float(new_issues),
         threshold=float(thresholds.new_issue_fail_count),
-        detail=f"crash-free {crash_str}, {new_issues} new issue(s)",
+        detail=detail,
     )
 
 

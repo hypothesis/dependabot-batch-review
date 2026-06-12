@@ -259,3 +259,55 @@ def test_newrelic_zero_baseline_many_errors_fails():
     cfg = HealthConfig(newrelic_token="k", newrelic_account_id="1")
     signal = sample_newrelic(NewRelicClient("k", 1), cfg, "bouncer")
     assert signal.healthy is False
+
+
+def _sentry_no_sessions():
+    responses.add(
+        responses.GET,
+        f"{SENTRY}/organizations/hypothesis/projects/",
+        json=[{"slug": "bouncer", "id": "42"}],
+    )
+    responses.add(
+        responses.GET, f"{SENTRY}/organizations/hypothesis/sessions/", json={"groups": []}
+    )
+
+
+@responses.activate
+def test_sentry_missing_crash_free_is_unknown_by_default():
+    _sentry_no_sessions()
+    responses.add(responses.GET, f"{SENTRY}/organizations/hypothesis/issues/", json=[])
+    cfg = HealthConfig(sentry_org="hypothesis", sentry_token="t")
+    signal = sample_sentry(SentryClient("t", "hypothesis"), cfg, "bouncer")
+    assert signal.healthy is False
+    assert signal.unknown is True
+
+
+@responses.activate
+def test_sentry_missing_crash_free_opt_out_uses_issues_alone():
+    from dependabot_batch_review.config import Thresholds
+
+    _sentry_no_sessions()
+    responses.add(responses.GET, f"{SENTRY}/organizations/hypothesis/issues/", json=[])
+    cfg = HealthConfig(
+        sentry_org="hypothesis",
+        sentry_token="t",
+        thresholds=Thresholds(require_crash_free=False),
+    )
+    signal = sample_sentry(SentryClient("t", "hypothesis"), cfg, "bouncer")
+    assert signal.healthy is True
+    assert signal.unknown is False
+
+
+@responses.activate
+def test_sentry_new_issues_outrank_missing_crash_free():
+    # Hard evidence of degradation must be degraded (rollback), not unknown.
+    _sentry_no_sessions()
+    responses.add(
+        responses.GET,
+        f"{SENTRY}/organizations/hypothesis/issues/",
+        json=[{"id": "1", "title": "KeyError"}],
+    )
+    cfg = HealthConfig(sentry_org="hypothesis", sentry_token="t")
+    signal = sample_sentry(SentryClient("t", "hypothesis"), cfg, "bouncer")
+    assert signal.healthy is False
+    assert signal.unknown is False

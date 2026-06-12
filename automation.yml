@@ -53,3 +53,6 @@ health:
     min_crash_free_pct: 99.0 # fail if Sentry crash-free sessions drop below this
     new_issue_fail_count: 1 # fail on >=1 brand-new unresolved Sentry issue
     nr_error_count_abs: 5 # cold-start guard when baseline traffic is ~0
+    # Missing Sentry session data counts as unverifiable (fail closed); set
+    # false for services that don't report sessions (new-issues alone decides).
+    require_crash_free: true
